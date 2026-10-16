@@ -1,0 +1,2740 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+  <title>D&D 5e Трекер и ИИ-Мастер</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: #020617; /* slate-950 */
+      color: #f4f4f5; /* zinc-100 */
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .hidden {
+      display: none !important;
+    }
+    svg {
+      width: 1rem;
+      height: 1rem;
+      flex-shrink: 0;
+    }
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+    }
+    #chatStream {
+      flex: 1 1 0%;
+      overflow-y: auto;
+    }
+    .font-serif-title {
+      font-family: 'Cinzel', Georgia, serif;
+    }
+    /* Скрытие полос прокрутки для горизонтального ряда карточек */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    /* Тонкий скроллбар для чата и шторок */
+    .thin-scrollbar::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    .thin-scrollbar::-webkit-scrollbar-track {
+      background: rgba(24, 24, 27, 0.4);
+    }
+    .thin-scrollbar::-webkit-scrollbar-thumb {
+      background: rgba(245, 158, 11, 0.35);
+      border-radius: 9999px;
+    }
+    .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: rgba(245, 158, 11, 0.6);
+    }
+    /* Стилизация базового Markdown в ответах ГМа */
+    .gm-markdown p {
+      margin-bottom: 0.6rem;
+      line-height: 1.55;
+    }
+    .gm-markdown p:last-child {
+      margin-bottom: 0;
+    }
+    .gm-markdown strong {
+      color: #fbbf24; /* amber-400 */
+      font-weight: 600;
+    }
+    .gm-markdown em {
+      color: #e4e4e7; /* zinc-200 */
+      font-style: italic;
+    }
+    .gm-markdown ul, .gm-markdown ol {
+      margin: 0.4rem 0 0.6rem 1.25rem;
+      padding: 0;
+    }
+    .gm-markdown ul {
+      list-style-type: disc;
+    }
+    .gm-markdown ol {
+      list-style-type: decimal;
+    }
+    .gm-markdown li {
+      margin-bottom: 0.25rem;
+    }
+    .gm-markdown blockquote {
+      border-left: 3px solid #f59e0b;
+      padding-left: 0.75rem;
+      margin: 0.5rem 0;
+      color: #d4d4d8;
+      font-style: italic;
+      background: rgba(245, 158, 11, 0.06);
+      padding-top: 0.35rem;
+      padding-bottom: 0.35rem;
+      border-radius: 0 0.375rem 0.375rem 0;
+    }
+    .gm-markdown code {
+      background: rgba(39, 39, 42, 0.9);
+      color: #fcd34d;
+      padding: 0.1rem 0.35rem;
+      border-radius: 0.25rem;
+      font-size: 0.85em;
+    }
+    .gm-markdown h1, .gm-markdown h2, .gm-markdown h3 {
+      color: #fbbf24;
+      font-weight: 700;
+      margin-top: 0.6rem;
+      margin-bottom: 0.35rem;
+      line-height: 1.3;
+    }
+    /* Анимация выезжающей шторки (Bottom Sheet) */
+    .sheet-backdrop {
+      transition: opacity 0.22s ease;
+    }
+    .sheet-panel {
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes pulse-amber {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    .animate-pulse-amber {
+      animation: pulse-amber 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-zinc-100 select-none overflow-x-hidden">
+
+  <!-- ГЛАВНЫЙ КОНТЕЙНЕР (100dvh, Flex Column) -->
+  <div id="app" class="flex flex-col w-full h-[100dvh] max-w-full overflow-hidden bg-slate-950">
+
+    <!-- ================= 1. TOP HUD (ПЕРСОНАЖИ И МИР) ================= -->
+    <header class="shrink-0 bg-zinc-900/95 border-b border-zinc-800/90 shadow-lg z-20">
+      <!-- Верхняя мини-строка: Кампания, локация, статус API и кнопка настроек -->
+	  
+		<div class="flex items-center px-3 pt-2 pb-1.5 gap-2 border-b border-zinc-600/60">
+			<span class="text-xs text-zinc-300 font-mono">Файл кампании:</span>
+			<select 
+				id="campaignSelect" 
+				class="bg-slate-900 text-amber-400 font-semibold text-xs border border-amber-500/30 rounded-lg px-2.5 py-1 focus:outline-none focus:border-amber-500 cursor-pointer">
+				<!-- Опции подтянутся скриптом -->
+			</select>
+		</div>
+
+      <div class="flex items-center justify-between px-3 pt-2 pb-1.5 gap-2 border-b border-zinc-800/60">	  
+        <button id="btnEditWorld" type="button" class="flex items-center gap-1.5 min-w-0 text-left group focus:outline-none" title="Нажмите для изменения локации и заметок мира">
+          <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 shrink-0">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </span>
+          <div class="truncate">
+            <div class="flex items-center gap-1.5">
+              <span id="hudLocation" class="text-xs font-semibold text-zinc-100 group-hover:text-amber-400 transition-colors truncate">Трактир «Хромая Собака»</span>
+              <span class="text-[10px] text-zinc-500">•</span>
+              <span id="hudTime" class="text-[11px] text-amber-400/90 font-medium shrink-0">Сумерки</span>
+            </div>
+          </div>
+        </button>
+
+        <div class="flex items-center gap-1.5 shrink-0">
+          <!-- Индикатор режима API / Демо -->
+          <button id="btnApiStatusBadge" type="button" class="px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors flex items-center gap-1">
+            <span id="apiStatusDot" class="w-1.5 h-1.5 rounded-full"></span>
+            <span id="apiStatusText">API</span>
+          </button>
+
+          <!-- Кнопка добавления нового героя -->
+          <button id="btnAddCharacter" type="button" class="inline-flex items-center justify-center h-7 px-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-amber-400 border border-zinc-700 text-xs font-semibold transition-colors" title="Добавить персонажа">
+            <svg class="w-3.5 h-3.5 mr-0.5" fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+            </svg>
+            <span>Герой</span>
+          </button>
+
+          <!-- Кнопка настроек ⚙️ -->
+          <button id="btnOpenSettings" type="button" class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-200 border border-zinc-700 transition-colors" title="Настройки, API и Экспорт/Импорт">
+            <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Горизонтальный ряд компактных карточек активных героев -->
+      <div id="partyHudContainer" class="flex items-stretch gap-2 px-3 py-2 overflow-x-auto no-scrollbar">
+        <!-- Карточки рендерятся динамически через JS -->
+      </div>
+    </header>
+
+    <!-- ================= 2. CHAT STREAM (ЦЕНТРАЛЬНАЯ ОБЛАСТЬ) ================= -->
+    <main id="chatStream" class="flex-1 overflow-y-auto thin-scrollbar px-3 py-3 space-y-3 select-text bg-slate-950">
+      <!-- Сообщения рендерятся динамически через JS -->
+    </main>
+
+    <!-- Индикатор загрузки LLM (скрыт по умолчанию) -->
+    <div id="loadingIndicator" class="hidden shrink-0 px-3 py-2 bg-zinc-900/90 border-t border-zinc-800/80">
+      <div class="flex items-center gap-2.5 text-xs text-amber-400">
+        <svg class="w-4 h-4 animate-spin text-amber-500 shrink-0" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="animate-pulse-amber font-medium">Мастер подземелий обдумывает последствия вашего хода...</span>
+      </div>
+    </div>
+
+    <!-- ================= 3. BOTTOM BAR (ПАНЕЛЬ ВВОДА И ДЕЙСТВИЙ) ================= -->
+    <footer class="shrink-0 bg-zinc-900 border-t border-zinc-800 px-3 pt-2 pb-2.5 z-20">
+      <!-- Строка быстрых утилит над инпутом -->
+      <div class="flex items-center justify-between gap-1.5 mb-2 overflow-x-auto no-scrollbar">
+        <div class="flex items-center gap-1.5 shrink-0">
+          <!-- Кнопка d20 -->
+          <button id="btnRollD20" type="button" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 active:bg-amber-500/35 text-amber-400 border border-amber-500/40 text-xs font-bold transition-colors shadow-sm">
+            <svg class="w-3.5 h-3.5 text-amber-400" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2L3 7v10l9 5 9-5V7l-9-5zm0 2.3l6.5 3.6-2.5 4.3H8L5.5 7.9 12 4.3zM5 9.6l2.1 3.6L5 16.8V9.6zm2.9 5.6h8.2l-4.1 4.5-4.1-4.5zm9.1-2L19 9.6v7.2l-2-3.6z"/>
+            </svg>
+            <span>d20</span>
+          </button>
+
+          <!-- Дополнительные кости (компактный селектор для удобства) -->
+          <button id="btnOpenDiceTray" type="button" class="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-300 border border-zinc-700 text-xs font-medium transition-colors" title="Другие кубики (d4–d100)">
+            <span>🎲 Кости</span>
+          </button>
+
+          <!-- Кнопка «Короткий отдых» -->
+          <button id="btnShortRest" type="button" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-emerald-400 border border-zinc-700 text-xs font-medium transition-colors">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z"/>
+            </svg>
+            <span>Короткий отдых</span>
+          </button>
+        </div>
+
+        <!-- Кнопка «Откат хода» (Undo) -->
+        <button id="btnUndoTurn" type="button" disabled class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 disabled:opacity-40 disabled:pointer-events-none text-zinc-300 border border-zinc-700 text-xs font-medium transition-colors shrink-0" title="Откатить последний ход и вернуть характеристики">
+          <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
+          </svg>
+          <span>Откат хода</span>
+        </button>
+      </div>
+
+      <!-- Выпадающая строка дополнительных кубиков (скрыта по умолчанию) -->
+      <div id="diceTrayBar" class="hidden items-center gap-1.5 mb-2 pb-1.5 border-b border-zinc-800 overflow-x-auto no-scrollbar">
+        <span class="text-[11px] text-zinc-400 mr-1 shrink-0">Бросок:</span>
+        <button type="button" data-dice="4" class="dice-quick-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 text-xs font-semibold">d4</button>
+        <button type="button" data-dice="6" class="dice-quick-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 text-xs font-semibold">d6</button>
+        <button type="button" data-dice="8" class="dice-quick-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 text-xs font-semibold">d8</button>
+        <button type="button" data-dice="10" class="dice-quick-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 text-xs font-semibold">d10</button>
+        <button type="button" data-dice="12" class="dice-quick-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 text-xs font-semibold">d12</button>
+        <button type="button" data-dice="100" class="dice-quick-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 text-xs font-semibold">d100</button>
+      </div>
+
+      <!-- Поле ввода (Textarea до 3 строк) + кнопка «Отправить» -->
+      <form id="chatForm" class="flex items-end gap-2">
+        <textarea
+          id="chatInput"
+          rows="1"
+          placeholder="Опишите действие героев..."
+          class="flex-1 bg-slate-950 text-zinc-100 placeholder-zinc-500 text-sm rounded-xl px-3.5 py-2.5 border border-zinc-700/90 focus:border-amber-500 focus:outline-none resize-none leading-5 max-h-[4.5rem] overflow-y-auto thin-scrollbar"
+        ></textarea>
+        <button
+          id="btnSendMessage"
+          type="submit"
+          class="inline-flex items-center justify-center h-10 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 active:bg-amber-600 disabled:opacity-50 disabled:pointer-events-none text-slate-950 font-bold text-sm transition-colors shrink-0 shadow-md shadow-amber-500/10"
+        >
+          <span class="hidden sm:inline mr-1.5">Отправить</span>
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.3" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7"/>
+          </svg>
+        </button>
+      </form>
+    </footer>
+
+  </div>
+
+  <!-- ================= 4. BOTTOM SHEET: РЕДАКТОР ПЕРСОНАЖА ================= -->
+  <div id="charSheetModal" class="fixed inset-0 z-40 hidden flex-col justify-end">
+    <!-- Backdrop -->
+    <div id="charSheetBackdrop" class="sheet-backdrop absolute inset-0 bg-black/75 backdrop-blur-[2px]"></div>
+
+    <!-- Выезжающая панель -->
+    <div class="sheet-panel relative w-full max-h-[88dvh] bg-zinc-900 border-t border-zinc-700 rounded-t-2xl shadow-2xl flex flex-col overflow-hidden z-10">
+      <!-- Ручка и заголовок шторки -->
+      <div class="shrink-0 pt-2 pb-2.5 px-4 border-b border-zinc-800 flex items-center justify-between">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="w-2 h-5 rounded-full bg-amber-500 shrink-0"></span>
+          <h2 id="sheetHeaderTitle" class="text-sm font-bold text-zinc-100 truncate">Карточка героя</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="btnDeleteCharacter" type="button" class="px-2.5 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-900/70 text-rose-300 border border-rose-800/60 text-xs font-medium transition-colors">
+            Удалить
+          </button>
+          <button id="btnCloseCharSheet" type="button" class="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center text-sm font-bold">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- Контент редактора персонажа со скроллом -->
+      <div id="charSheetBody" class="flex-1 overflow-y-auto thin-scrollbar p-4 space-y-4 select-text">
+        <!-- Поля заполняются динамически через JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 5. МОДАЛКА НАСТРОЕК И ЭКСПОРТА/ИМПОРТА ================= -->
+  <div id="settingsModal" class="fixed inset-0 z-50 hidden items-center justify-center p-3">
+    <div id="settingsBackdrop" class="absolute inset-0 bg-black/80 backdrop-blur-[2px]"></div>
+
+    <div class="relative w-full max-w-md max-h-[90dvh] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden z-10">
+      <!-- Заголовок -->
+      <div class="shrink-0 px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-amber-500">⚙️</span>
+          <h2 class="text-sm font-bold text-zinc-100">Настройки LLM и Управление Кампанией</h2>
+        </div>
+        <button id="btnCloseSettings" type="button" class="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center text-sm font-bold">
+          ✕
+        </button>
+      </div>
+
+      <!-- Тело настроек -->
+      <div class="flex-1 overflow-y-auto thin-scrollbar p-4 space-y-5 select-text">
+
+        <!-- Блок 1: Подключение к LLM API (dnd_credentials) -->
+        <section class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-amber-400">1. Подключение к LLM API</h3>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">Только в памяти браузера</span>
+          </div>
+          <p class="text-[11px] text-zinc-400 leading-relaxed">
+            Ключи хранятся изолированно в <code class="text-amber-300">dnd_credentials</code> и <strong>никогда</strong> не попадают в файлы экспорта кампании.
+          </p>
+
+          <!-- Быстрые пресеты эндпоинтов -->
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" data-preset="openai" class="api-preset-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700">OpenAI</button>
+            <button type="button" data-preset="openrouter" class="api-preset-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700">OpenRouter</button>
+            <button type="button" data-preset="deepseek" class="api-preset-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700">DeepSeek</button>
+            <button type="button" data-preset="ollama" class="api-preset-btn px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-[11px] text-zinc-300 border border-zinc-700">Ollama (Локальная сеть)</button>
+          </div>
+
+          <div class="space-y-2.5">
+            <div>
+              <label for="inputApiUrl" class="block text-xs text-zinc-300 mb-1 font-medium">API Endpoint URL</label>
+              <input id="inputApiUrl" type="url" placeholder="https://api.openai.com/v1/chat/completions" class="w-full bg-slate-950 text-zinc-100 text-xs rounded-lg px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label for="inputApiKey" class="block text-xs text-zinc-300 mb-1 font-medium">API Key (оставьте пустым для демо-режима или локальной Ollama)</label>
+              <input id="inputApiKey" type="password" placeholder="sk-..." autocomplete="off" class="w-full bg-slate-950 text-zinc-100 text-xs rounded-lg px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label for="inputApiModel" class="block text-xs text-zinc-300 mb-1 font-medium">Модель (Model ID)</label>
+              <input id="inputApiModel" type="text" placeholder="gpt-4o-mini" class="w-full bg-slate-950 text-zinc-100 text-xs rounded-lg px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+
+            <!-- Переключатель автономного демо-мастера (если нет ключа или для проверки) -->
+            <label class="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-950/90 border border-zinc-800 cursor-pointer">
+              <input id="inputDemoMode" type="checkbox" class="mt-0.5 accent-amber-500 rounded">
+              <div class="text-xs">
+                <div class="font-semibold text-zinc-200">Автономный Демо-ГМ (если нет API-ключа)</div>
+                <div class="text-[11px] text-zinc-400 mt-0.5">Позволяет тестировать игру, броски d20 и автоматическое изменение статов без внешнего сервера. Если ввести API-ключ и снять галочку — запросы идут через <code class="text-amber-400">fetch()</code>.</div>
+              </div>
+            </label>
+          </div>
+
+          <button id="btnSaveCredentials" type="button" class="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors">
+            Сохранить настройки API
+          </button>
+        </section>
+
+        <!-- Блок 2: Управление состоянием кампании (dnd_campaign) -->
+        <section class="pt-3 border-t border-zinc-800 space-y-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-amber-400">2. Профиль кампании (JSON)</h3>
+
+          <div class="grid grid-cols-2 gap-2">
+            <!-- Безопасный экспорт -->
+            <button id="btnExportCampaign" type="button" class="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 text-xs font-semibold transition-colors">
+              <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+              </svg>
+              <span>Экспорт кампании</span>
+            </button>
+
+            <!-- Импорт -->
+            <label for="inputImportFile" class="flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 text-xs font-semibold transition-colors cursor-pointer">
+              <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+              </svg>
+              <span>Импорт JSON</span>
+              <input id="inputImportFile" type="file" accept=".json,application/json" class="hidden">
+            </label>
+          </div>
+
+          <!-- Сброс / Загрузка демо -->
+          <div class="pt-1">
+            <button id="btnResetDemoPreset" type="button" class="w-full py-2.5 px-3 rounded-xl bg-rose-950/50 hover:bg-rose-900/60 text-rose-200 border border-rose-800/60 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5">
+              <svg class="w-4 h-4 text-rose-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+              <span>Сброс / Загрузить демо («Хромая Собака»)</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Блок 3: Тестирование отказоустойчивого парсера LLM -->
+        <section class="pt-3 border-t border-zinc-800 space-y-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-amber-400">3. Проверка JSON-протокола ГМа</h3>
+          <p class="text-[11px] text-zinc-400">
+            Вы можете протестировать парсер ответа LLM (включая очистку обёртки <code class="text-amber-300">```json</code> и применение <code class="text-amber-300">state_update</code>):
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button id="btnSimulateStructuredTurn" type="button" class="w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-colors">
+              ⚡ Тест JSON-апдейта ГМа
+            </button>
+            <button id="btnSimulateFallbackTurn" type="button" class="w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 text-xs font-semibold transition-colors">
+              🛡️ Тест сбоя JSON (текст)
+            </button>
+          </div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 6. МОДАЛКА РЕДАКТИРОВАНИЯ МИРА ИЛИ КОРОТКОГО ОТДЫХА ================= -->
+  <div id="auxModal" class="fixed inset-0 z-50 hidden items-center justify-center p-3">
+    <div id="auxBackdrop" class="absolute inset-0 bg-black/80 backdrop-blur-[2px]"></div>
+    <div class="relative w-full max-w-md bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden z-10">
+      <div class="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+        <h2 id="auxModalTitle" class="text-sm font-bold text-zinc-100">Модальное окно</h2>
+        <button id="btnCloseAuxModal" type="button" class="w-7 h-7 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center text-sm font-bold">✕</button>
+      </div>
+      <div id="auxModalBody" class="p-4 space-y-3 text-xs select-text max-h-[80dvh] overflow-y-auto thin-scrollbar"></div>
+    </div>
+  </div>
+
+  <!-- ================= 7. ВСПЛЫВАЮЩИЕ УВЕДОМЛЕНИЯ (TOAST) ================= -->
+  <div id="toastContainer" class="fixed top-14 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-1.5 pointer-events-none w-[92%] max-w-sm"></div>
+
+  <!-- ================= JAVASCRIPT (VANILLA ES6) ================= -->
+  <script>
+    (function () {
+      'use strict';
+
+      // ---------------------------------------------------------------------------
+      // 1. КОНСТАНТЫ И СТАРТОВЫЙ ДЕМО-ПРЕСЕТ (Раздел 5 ТЗ)
+      // ---------------------------------------------------------------------------
+// Считываем ID кампании из адресной строки: ?c=имя
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const CAMPAIGN_ID = (URL_PARAMS.get('c') || 'default').replace(/[^a-zA-Z0-9_\-]/g, '') || 'default';
+
+const STORAGE_KEYS = {
+  CAMPAIGN: `dnd_campaign_${CAMPAIGN_ID}`, // У каждой кампании строго свой ключ в localStorage
+  CREDENTIALS: 'dnd_credentials',         // API-ключи общие для всех кампаний
+  BACKUP: `dnd_campaign_backup_${CAMPAIGN_ID}`
+};
+
+      const DEFAULT_CREDENTIALS = {
+        apiUrl: 'https://api.openai.com/v1/chat/completions',
+        apiKey: '',
+        model: 'gpt-4o-mini',
+        demoMode: true
+      };
+
+      const STARTER_DEMO_PRESET = {
+        campaignName: 'Побережье Мечей',
+        world: {
+          location: 'Трактир «Хромая Собака»',
+          time: 'Сумерки',
+          notes: 'Снаружи моросит холодный осенний дождь. В зале пахнет дешёвым элем, мокрой шерстью и дымом очага.'
+        },
+        party: [
+          {
+            id: 'char_1',
+            name: 'Лиора Эстель',
+            class: 'Эльф / Целительница (2 ур)',
+            hp: { current: 18, max: 18 },
+            ac: 13,
+            stats: { str: 10, dex: 14, con: 12, int: 10, wis: 16, cha: 14 },
+            spellSlots: [{ level: 1, max: 3, current: 3 }],
+            conditions: [],
+            currency: { gp: 0, sp: 12, cp: 4 },
+            inventory: [
+              { name: 'Боевая коса', qty: 1 },
+              { name: 'Сумка целителя', qty: 1 }
+            ]
+          },
+          {
+            id: 'char_2',
+            name: 'Вэл',
+            class: 'Человек / Воин (2 ур)',
+            hp: { current: 24, max: 24 },
+            ac: 16,
+            stats: { str: 16, dex: 14, con: 14, int: 10, wis: 12, cha: 8 },
+            spellSlots: [],
+            conditions: [],
+            currency: { gp: 0, sp: 8, cp: 0 },
+            inventory: [
+              { name: 'Полуторный меч', qty: 1 },
+              { name: 'Кольчуга', qty: 1 },
+              { name: 'Огниво', qty: 1 },
+              { name: 'Веревка', qty: 1 }
+            ]
+          }
+        ],
+        chatHistory: [
+          {
+            role: 'assistant',
+            content:
+              '### Трактир «Хромая Собака»\n\nТяжёлая дубовая дверь со скрипом захлопывается за вашими спинами, отсекая вой ветра и холодный ливень. В полутёмном зале **«Хромой Собаки»** чадят сальные свечи.\n\nЗа стойкой угрюмый трактирщик протирает глиняные кружки, а в дальнем углу у камина сидит человек в промокшем дорожном плаще, нервно оглядываясь на вход. Заметив **Лиору** и **Вэла**, он едва заметно кивает вам на свободный стул напротив.\n\n*Что вы предпримете?*',
+            stateDeltaSummary: ''
+          }
+        ]
+      };
+
+      const SYSTEM_PROMPT = `Ты — опытный Мастер Подземелий (Dungeon Master) для настольной ролевой игры D&D 5-й редакции.
+Веди увлекательную, атмосферную игру на русском языке.
+Учитывай текущее состояние партии (party) и мира (world), переданное в контексте.
+Всегда соблюдай баланс D&D 5e: запрашивай проверки характеристик (d20), учитывай КД (AC), трать ячейки заклинаний при касте, изменяй HP при уроне или лечении, обновляй инвентарь и монеты.
+
+КРИТИЧЕСКОЕ ТРЕБОВАНИЕ К ФОРМАТУ ОТВЕТА:
+Ты обязан вернуть ответ СТРОГО в виде валидного JSON-объекта без лишнего текста вокруг него по следующей схеме:
+{
+  "narrative": "Художественный текст хода ГМа в Markdown...",
+  "state_update": {
+    "character_changes": [
+      {
+        "name": "Имя персонажа",
+        "hp_delta": 0,
+        "spell_slots_spent": { "1": 0 },
+        "conditions_add": [],
+        "conditions_remove": []
+      }
+    ],
+    "inventory_add": [{ "char_name": "Имя персонажа", "item": "Название предмета", "qty": 1 }],
+    "inventory_remove": [{ "char_name": "Имя персонажа", "item": "Название предмета", "qty": 1 }],
+    "currency_delta": { "gp": 0, "sp": 0, "cp": 0 },
+    "location_update": ""
+  }
+}
+Если в ходе нет изменений какого-то параметра, оставляй пустые массивы, нули или пустую строку в location_update.`;
+
+      const DND_CONDITIONS_PRESETS = [
+        'Настороже',
+        'Благословение',
+        'Отравлен',
+        'Испуган',
+        'Сбит с ног',
+        'Ослеплён',
+        'Очарован',
+        'Невидимый',
+        'Парализован',
+        'Истощение'
+      ];
+
+      // ---------------------------------------------------------------------------
+      // 2. БЕЗОПАСНАЯ ОБЁРТКА НАД LOCALSTORAGE (С IN-MEMORY FALLBACK)
+      // ---------------------------------------------------------------------------
+      const memoryStorage = {};
+
+      function safeGetStorage(key) {
+        try {
+          const val = window.localStorage.getItem(key);
+          if (val !== null) return val;
+        } catch (e) {
+          // Игнорируем блокировку в iframe
+        }
+        return Object.prototype.hasOwnProperty.call(memoryStorage, key) ? memoryStorage[key] : null;
+      }
+
+      function safeSetStorage(key, value) {
+        memoryStorage[key] = value;
+        try {
+          window.localStorage.setItem(key, value);
+        } catch (e) {
+          // Игнорируем блокировку в iframe
+        }
+      }
+
+      function safeRemoveStorage(key) {
+        delete memoryStorage[key];
+        try {
+          window.localStorage.removeItem(key);
+        } catch (e) {
+          // Игнорируем блокировку в iframe
+        }
+      }
+
+      function deepClone(obj) {
+        return JSON.parse(JSON.stringify(obj));
+      }
+
+      // ---------------------------------------------------------------------------
+      // 3. СОСТОЯНИЕ ПРИЛОЖЕНИЯ В ПАМЯТИ
+      // ---------------------------------------------------------------------------
+      let credentials = loadCredentials();
+      let campaign = loadCampaign();
+      let lastSnapshot = loadSnapshot();
+      let activeEditingCharId = null;
+      let isGenerating = false;
+
+      function loadCredentials() {
+        const raw = safeGetStorage(STORAGE_KEYS.CREDENTIALS);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            return {
+              apiUrl: typeof parsed.apiUrl === 'string' && parsed.apiUrl.trim() ? parsed.apiUrl.trim() : DEFAULT_CREDENTIALS.apiUrl,
+              apiKey: typeof parsed.apiKey === 'string' ? parsed.apiKey.trim() : '',
+              model: typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model.trim() : DEFAULT_CREDENTIALS.model,
+              demoMode: typeof parsed.demoMode === 'boolean' ? parsed.demoMode : !parsed.apiKey
+            };
+          } catch (e) {
+            return deepClone(DEFAULT_CREDENTIALS);
+          }
+        }
+        const initial = deepClone(DEFAULT_CREDENTIALS);
+        safeSetStorage(STORAGE_KEYS.CREDENTIALS, JSON.stringify(initial));
+        return initial;
+      }
+
+      function saveCredentials() {
+        // В dnd_credentials сохраняем apiUrl, apiKey, model (и demoMode)
+        safeSetStorage(STORAGE_KEYS.CREDENTIALS, JSON.stringify(credentials));
+        renderApiStatusBadge();
+      }
+
+      function normalizeCharacter(char, idx) {
+        const hpMax = Math.max(1, parseInt(char?.hp?.max, 10) || 10);
+        const hpCur = Math.min(hpMax, Math.max(0, parseInt(char?.hp?.current, 10) ?? hpMax));
+        return {
+          id: char?.id || 'char_' + Date.now() + '_' + idx,
+          name: String(char?.name || 'Безымянный герой').trim(),
+          class: String(char?.class || 'Искатель приключений (1 ур)').trim(),
+		  shortBio: String(char?.shortBio || '').trim(), // <-- Улетает мастеру
+		  fullBio: String(char?.fullBio || '').trim(),   // <-- Только для тебя
+          hp: { current: hpCur, max: hpMax },
+          ac: parseInt(char?.ac, 10) || 12,
+          stats: {
+            str: parseInt(char?.stats?.str, 10) || 10,
+            dex: parseInt(char?.stats?.dex, 10) || 10,
+            con: parseInt(char?.stats?.con, 10) || 10,
+            int: parseInt(char?.stats?.int, 10) || 10,
+            wis: parseInt(char?.stats?.wis, 10) || 10,
+            cha: parseInt(char?.stats?.cha, 10) || 10
+          },
+          spellSlots: Array.isArray(char?.spellSlots)
+            ? char.spellSlots.map(s => ({
+                level: Math.max(1, parseInt(s.level, 10) || 1),
+                max: Math.max(0, parseInt(s.max, 10) || 0),
+                current: Math.max(0, Math.min(parseInt(s.max, 10) || 0, parseInt(s.current, 10) ?? 0))
+              }))
+            : [],
+          conditions: Array.isArray(char?.conditions)
+            ? char.conditions.map(c => String(c).trim()).filter(Boolean)
+            : [],
+          currency: {
+            gp: Math.max(0, parseInt(char?.currency?.gp, 10) || 0),
+            sp: Math.max(0, parseInt(char?.currency?.sp, 10) || 0),
+            cp: Math.max(0, parseInt(char?.currency?.cp, 10) || 0)
+          },
+          inventory: Array.isArray(char?.inventory)
+            ? char.inventory
+                .map(it => ({
+                  name: String(it?.name || '').trim(),
+                  qty: Math.max(1, parseInt(it?.qty, 10) || 1)
+                }))
+                .filter(it => it.name.length > 0)
+            : []
+        };
+      }
+
+      function validateAndNormalizeCampaign(data) {
+        if (!data || typeof data !== 'object') return null;
+        if (!Array.isArray(data.party) || !Array.isArray(data.chatHistory)) return null;
+        return {
+          campaignName: String(data.campaignName || 'Побережье Мечей'),
+          world: {
+            location: String(data.world?.location || 'Трактир «Хромая Собака»'),
+            time: String(data.world?.time || 'Сумерки'),
+            notes: String(data.world?.notes || '')
+          },
+          party: data.party.map((c, i) => normalizeCharacter(c, i)),
+          chatHistory: data.chatHistory.map(m => ({
+            role: m.role === 'user' ? 'user' : 'assistant',
+            content: String(m.content || ''),
+            stateDeltaSummary: String(m.stateDeltaSummary || '')
+          }))
+        };
+      }
+
+      function loadCampaign() {
+        const raw = safeGetStorage(STORAGE_KEYS.CAMPAIGN);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            const normalized = validateAndNormalizeCampaign(parsed);
+            if (normalized) return normalized;
+          } catch (e) {
+            // fallback to starter preset
+          }
+        }
+        const initial = deepClone(STARTER_DEMO_PRESET);
+        safeSetStorage(STORAGE_KEYS.CAMPAIGN, JSON.stringify(initial));
+        return initial;
+      }
+
+      function saveCampaign() {
+        try {
+          campaign.updatedAt = Date.now();
+          safeSetStorage(STORAGE_KEYS.CAMPAIGN, JSON.stringify(campaign));
+
+          fetch(`/api/campaign?id=${encodeURIComponent(CAMPAIGN_ID)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(campaign)
+          })
+          .then(res => {
+            if (res.ok) {
+              console.log(`[SYNC] Сейв "${CAMPAIGN_ID}" успешно улетел на сервер`);
+            } else {
+              console.warn('[SYNC] Ошибка сервера при сохранении:', res.status);
+            }
+          })
+          .catch(err => {
+            console.warn('[SYNC] Сервер недоступен, работаем локально');
+          });
+        } catch (err) {
+          console.error('[SYNC] Фатальная ошибка в saveCampaign:', err);
+        }
+      }
+
+      function loadSnapshot() {
+        const raw = safeGetStorage(STORAGE_KEYS.SNAPSHOT);
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw);
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function createSnapshot() {
+        lastSnapshot = deepClone({
+          campaignName: campaign.campaignName,
+          world: campaign.world,
+          party: campaign.party,
+          chatHistory: campaign.chatHistory
+        });
+        safeSetStorage(STORAGE_KEYS.SNAPSHOT, JSON.stringify(lastSnapshot));
+        updateUndoButtonState();
+      }
+
+      function clearSnapshot() {
+        lastSnapshot = null;
+        safeRemoveStorage(STORAGE_KEYS.SNAPSHOT);
+        updateUndoButtonState();
+      }
+
+      // ---------------------------------------------------------------------------
+      // 4. УТИЛИТЫ ФОРМАТИРОВАНИЯ, БЕЗОПАСНОГО HTML И MARKDOWN
+      // ---------------------------------------------------------------------------
+      function escapeHtml(str) {
+        return String(str ?? '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function formatModifier(score) {
+        const mod = Math.floor(((parseInt(score, 10) || 10) - 10) / 2);
+        return mod >= 0 ? `+${mod}` : `${mod}`;
+      }
+
+      function renderMarkdown(mdText) {
+        const escaped = escapeHtml(mdText);
+        const lines = escaped.split(/\r?\n/);
+        const htmlParts = [];
+        let inList = false;
+        let listType = 'ul';
+
+        function closeList() {
+          if (inList) {
+            htmlParts.push(`</${listType}>`);
+            inList = false;
+          }
+        }
+
+        function formatInline(text) {
+          return text
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+            .replace(/_([^_]+)_/g, '<em>$1</em>');
+        }
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) {
+            closeList();
+            continue;
+          }
+          if (/^#{1,3}\s+/.test(line)) {
+            closeList();
+            const level = line.match(/^(#{1,3})/)[1].length;
+            const content = formatInline(line.replace(/^#{1,3}\s+/, ''));
+            htmlParts.push(`<h${level} class="text-sm sm:text-base">${content}</h${level}>`);
+          } else if (/^(&gt;|>)\s*/.test(line)) {
+            closeList();
+            const content = formatInline(line.replace(/^(&gt;|>)\s*/, ''));
+            htmlParts.push(`<blockquote>${content}</blockquote>`);
+          } else if (/^[-*•]\s+/.test(line)) {
+            if (!inList || listType !== 'ul') {
+              closeList();
+              htmlParts.push('<ul>');
+              inList = true;
+              listType = 'ul';
+            }
+            htmlParts.push(`<li>${formatInline(line.replace(/^[-*•]\s+/, ''))}</li>`);
+          } else if (/^\d+\.\s+/.test(line)) {
+            if (!inList || listType !== 'ol') {
+              closeList();
+              htmlParts.push('<ol>');
+              inList = true;
+              listType = 'ol';
+            }
+            htmlParts.push(`<li>${formatInline(line.replace(/^\d+\.\s+/, ''))}</li>`);
+          } else {
+            closeList();
+            htmlParts.push(`<p>${formatInline(line)}</p>`);
+          }
+        }
+        closeList();
+        return htmlParts.join('');
+      }
+
+      function showToast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        const toast = document.createElement('div');
+        const colors = {
+          info: 'bg-zinc-900/95 border-amber-500/50 text-zinc-100',
+          success: 'bg-emerald-950/95 border-emerald-500/50 text-emerald-100',
+          warning: 'bg-amber-950/95 border-amber-400/60 text-amber-100',
+          error: 'bg-rose-950/95 border-rose-500/60 text-rose-100'
+        };
+        toast.className = `px-3.5 py-2 rounded-xl border shadow-xl text-xs font-medium transition-all duration-200 pointer-events-auto flex items-center gap-2 ${colors[type] || colors.info}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+        setTimeout(() => {
+          toast.style.opacity = '0';
+          toast.style.transform = 'translateY(-6px)';
+          setTimeout(() => toast.remove(), 220);
+        }, 3200);
+      }
+	  
+	  function copyToClipboard(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(() => {
+            showToast('Текст хода скопирован в буфер', 'success');
+          }).catch(() => fallbackCopy(text));
+        } else {
+          fallbackCopy(text);
+        }
+      }
+
+      function fallbackCopy(text) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.top = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try {
+          document.execCommand('copy');
+          showToast('Текст хода скопирован в буфер', 'success');
+        } catch (err) {
+          showToast('Не удалось скопировать', 'error');
+        }
+        document.body.removeChild(ta);
+      }
+
+      // ---------------------------------------------------------------------------
+      // 5. РЕНДЕР TOP HUD (ПЕРСОНАЖИ И МИР)
+      // ---------------------------------------------------------------------------
+      function renderApiStatusBadge() {
+        const dot = document.getElementById('apiStatusDot');
+        const text = document.getElementById('apiStatusText');
+        const btn = document.getElementById('btnApiStatusBadge');
+        if (!dot || !text || !btn) return;
+
+        if (!credentials.demoMode) {
+          dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+          text.textContent = 'LLM API';
+          btn.className = 'px-2 py-0.5 rounded-full text-[10px] font-medium border border-emerald-500/40 bg-emerald-950/40 text-emerald-300 flex items-center gap-1';
+        } else {
+          dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+          text.textContent = 'Демо-ГМ';
+          btn.className = 'px-2 py-0.5 rounded-full text-[10px] font-medium border border-amber-500/40 bg-amber-950/40 text-amber-300 flex items-center gap-1';
+        }
+      }
+	  
+async function initCampaignSelector() {
+        const select = document.getElementById('campaignSelect');
+        if (!select) return;
+
+        try {
+          const res = await fetch('/api/campaigns', { cache: 'no-store' });
+          const list = res.ok ? await res.json() : [];
+
+          // Если текущей кампании ещё нет в списке на диске, добавим её для отображения
+          if (!list.includes(CAMPAIGN_ID)) {
+            list.unshift(CAMPAIGN_ID);
+          }
+
+          select.innerHTML = `
+            ${list.map(cid => `<option value="${cid}" ${cid === CAMPAIGN_ID ? 'selected' : ''}>${cid}</option>`).join('')}
+            <option disabled>──────────</option>
+            <option value="__NEW__">+ Создать новый...</option>
+          `;
+
+          select.onchange = () => {
+            const val = select.value;
+            if (val === '__NEW__') {
+              const name = prompt('Имя новой кампании (латиницей, без пробелов):');
+              if (name) {
+                const clean = name.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '-');
+                if (clean) {
+                  window.location.search = `?c=${encodeURIComponent(clean)}`;
+                  return;
+                }
+              }
+              // Если отменили — возвращаем текущую
+              select.value = CAMPAIGN_ID;
+            } else if (val !== CAMPAIGN_ID) {
+              window.location.search = `?c=${encodeURIComponent(val)}`;
+            }
+          };
+        } catch (e) {
+          // В офлайне просто показываем текущую кампанию
+          select.innerHTML = `<option value="${CAMPAIGN_ID}">${CAMPAIGN_ID}</option>`;
+        }
+      }
+
+      function renderHud() {
+        const locEl = document.getElementById('hudLocation');
+        const timeEl = document.getElementById('hudTime');
+        if (locEl) locEl.textContent = campaign.world.location || 'Неизвестная локация';
+        if (timeEl) timeEl.textContent = campaign.world.time || 'День';
+
+        renderApiStatusBadge();
+		initCampaignSelector();
+
+        const container = document.getElementById('partyHudContainer');
+        if (!container) return;
+        container.innerHTML = '';
+
+        if (!campaign.party.length) {
+          const empty = document.createElement('div');
+          empty.className = 'text-xs text-zinc-400 py-2 px-1';
+          empty.textContent = 'В отряде нет героев. Нажмите «+ Герой», чтобы добавить персонажа.';
+          container.appendChild(empty);
+          return;
+        }
+
+        campaign.party.forEach(char => {
+          const hpMax = Math.max(1, char.hp.max);
+          const hpCur = Math.max(0, Math.min(hpMax, char.hp.current));
+          const hpPct = Math.round((hpCur / hpMax) * 100);
+
+          // Полоска HP: зелёная > 50%, жёлтая > 20%, красная <= 20%
+          let hpColorClass = 'bg-emerald-500';
+          if (hpPct <= 20) {
+            hpColorClass = 'bg-rose-600';
+          } else if (hpPct <= 50) {
+            hpColorClass = 'bg-amber-500';
+          }
+
+          // Сборка точек/сфер ячеек заклинаний
+          let slotsHtml = '';
+          if (Array.isArray(char.spellSlots) && char.spellSlots.length > 0) {
+            const slotGroups = char.spellSlots
+              .filter(s => s.max > 0)
+              .map(s => {
+                let dots = '';
+                for (let i = 0; i < s.max; i++) {
+                  const isAvailable = i < s.current;
+                  dots += `<span class="inline-block w-2 h-2 rounded-full ${
+                    isAvailable
+                      ? 'bg-amber-400 shadow-[0_0_5px_rgba(251,191,36,0.75)]'
+                      : 'bg-zinc-700 border border-zinc-600'
+                  }"></span>`;
+                }
+                return `<span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-950/80 border border-zinc-800 text-[10px] text-zinc-300" title="Ячейки ${s.level} круга: ${s.current}/${s.max}">
+                  <span class="text-amber-400 font-semibold mr-0.5">${s.level}у:</span>${dots}
+                </span>`;
+              })
+              .join('');
+            if (slotGroups) {
+              slotsHtml = `<div class="flex flex-wrap items-center gap-1 mt-1">${slotGroups}</div>`;
+            }
+          }
+
+          // Плашки состояний (conditions)
+          let conditionsHtml = '';
+          if (Array.isArray(char.conditions) && char.conditions.length > 0) {
+            const badges = char.conditions
+              .map(
+                cond =>
+                  `<span class="inline-block px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 text-[10px] font-medium leading-none">${escapeHtml(
+                    cond
+                  )}</span>`
+              )
+              .join('');
+            conditionsHtml = `<div class="flex flex-wrap gap-1 mt-1">${badges}</div>`;
+          }
+
+          const card = document.createElement('button');
+          card.type = 'button';
+          card.className =
+            'shrink-0 w-44 sm:w-52 text-left rounded-xl bg-slate-950/90 hover:bg-slate-900 active:scale-[0.99] border border-zinc-800 hover:border-amber-500/50 p-2.5 transition-all flex flex-col justify-between shadow-sm focus:outline-none';
+          card.setAttribute('data-char-id', char.id);
+
+          card.innerHTML = `
+            <div class="w-full">
+              <div class="flex items-center justify-between gap-1">
+                <span class="text-xs font-bold text-zinc-100 truncate">${escapeHtml(char.name)}</span>
+                <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[10px] font-semibold text-amber-400 shrink-0" title="Класс Доспеха (AC)">
+                  🛡️ ${char.ac}
+                </span>
+              </div>
+              <div class="text-[10px] text-zinc-400 truncate mt-0.5">${escapeHtml(char.class)}</div>
+
+              <!-- Полоска HP -->
+              <div class="mt-1.5">
+                <div class="flex items-center justify-between text-[10px] mb-0.5">
+                  <span class="text-zinc-400 font-medium">HP</span>
+                  <span class="font-bold ${hpPct <= 20 ? 'text-rose-400' : hpPct <= 50 ? 'text-amber-300' : 'text-emerald-400'}">${hpCur} / ${hpMax}</span>
+                </div>
+                <div class="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                  <div class="${hpColorClass} h-full rounded-full transition-all duration-300" style="width: ${hpPct}%"></div>
+                </div>
+              </div>
+              ${slotsHtml}
+              ${conditionsHtml}
+            </div>
+          `;
+
+          card.addEventListener('click', () => openCharacterSheet(char.id));
+          container.appendChild(card);
+        });
+      }
+
+      // ---------------------------------------------------------------------------
+      // 6. РЕНДЕР ИСТОРИИ СООБЩЕНИЙ (CHAT STREAM)
+      // ---------------------------------------------------------------------------
+      function renderChat(scrollToBottom = true) {
+        const stream = document.getElementById('chatStream');
+        if (!stream) return;
+        stream.innerHTML = '';
+
+        campaign.chatHistory.forEach((msg, index) => {
+          const isUser = msg.role === 'user';
+          const wrapper = document.createElement('div');
+          wrapper.className = `flex flex-col ${isUser ? 'items-end' : 'items-start'}`;
+
+          // Блок аудита изменений над ответом ГМа (если были изменения)
+          let auditHtml = '';
+          if (!isUser && msg.stateDeltaSummary && msg.stateDeltaSummary.trim()) {
+            const tags = msg.stateDeltaSummary
+              .split(/\s*\|\s*|\s*(?=\[)/)
+              .map(t => t.trim())
+              .filter(Boolean);
+            const badgesHtml = tags
+              .map(tag => {
+                const isWarning = tag.includes('Не удалось автоматически обновить статы');
+                return `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                  isWarning
+                    ? 'bg-amber-950/90 text-amber-300 border border-amber-500/50'
+                    : 'bg-zinc-900 text-amber-400 border border-amber-500/35'
+                }">${escapeHtml(tag)}</span>`;
+              })
+              .join('');
+
+            auditHtml = `<div class="flex flex-wrap gap-1 mb-1.5 max-w-[92%] sm:max-w-[82%]">${badgesHtml}</div>`;
+          }
+
+          const bubble = document.createElement('div');
+          if (isUser) {
+            bubble.className =
+              'max-w-[86%] sm:max-w-[75%] rounded-2xl rounded-br-sm bg-amber-500/15 border border-amber-500/35 text-zinc-100 px-3.5 py-2.5 text-sm leading-relaxed shadow-sm';
+            bubble.innerHTML = `<div class="whitespace-pre-wrap break-words">${escapeHtml(msg.content)}</div>`;
+          } else {
+            bubble.className =
+              'max-w-[94%] sm:max-w-[84%] rounded-2xl rounded-bl-sm bg-zinc-900/95 border border-zinc-800 text-zinc-100 px-4 py-3 text-sm leading-relaxed shadow-md';
+            bubble.innerHTML = `
+  <div class="flex items-center justify-between gap-2 mb-1.5 pb-1 border-b border-zinc-800/80">
+    <span class="text-[11px] font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1">
+      <span>🐉 Мастер Подземелий</span>
+    </span>
+    <div class="flex items-center gap-2">
+      <span class="text-[10px] text-zinc-500">Ход #${index + 1}</span>
+      <button type="button" class="btn-copy-turn inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-300 hover:text-amber-400 border border-zinc-700 text-[10px] font-medium transition-colors" title="Скопировать текст хода">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+        </svg>
+        <span>Копия</span>
+      </button>
+    </div>
+  </div>
+  <div class="gm-markdown break-words">${renderMarkdown(msg.content)}</div>
+`;
+
+// Вешаем обработчик копирования:
+const copyBtn = bubble.querySelector('.btn-copy-turn');
+if (copyBtn) {
+  copyBtn.addEventListener('click', () => copyToClipboard(msg.content));
+}
+          }
+
+          if (auditHtml) {
+            const auditContainer = document.createElement('div');
+            auditContainer.innerHTML = auditHtml;
+            wrapper.appendChild(auditContainer.firstElementChild);
+          }
+          wrapper.appendChild(bubble);
+          stream.appendChild(wrapper);
+        });
+
+        if (scrollToBottom) {
+          requestAnimationFrame(() => {
+            stream.scrollTop = stream.scrollHeight;
+          });
+        }
+      }
+
+      function updateUndoButtonState() {
+        const btn = document.getElementById('btnUndoTurn');
+        if (!btn) return;
+        btn.disabled = !lastSnapshot || isGenerating;
+      }
+
+      // ---------------------------------------------------------------------------
+      // 7. BOTTOM SHEET: РЕДАКТИРОВАНИЕ КАРТОЧКИ ПЕРСОНАЖА
+      // ---------------------------------------------------------------------------
+      function openCharacterSheet(charId) {
+        const char = campaign.party.find(c => c.id === charId);
+        if (!char) return;
+        activeEditingCharId = charId;
+
+        const modal = document.getElementById('charSheetModal');
+        const title = document.getElementById('sheetHeaderTitle');
+        if (title) title.textContent = `${char.name} — Редактор`;
+        renderCharacterSheetBody(char);
+
+        if (modal) {
+          modal.classList.remove('hidden');
+          modal.classList.add('flex');
+        }
+      }
+
+      function closeCharacterSheet() {
+        activeEditingCharId = null;
+        const modal = document.getElementById('charSheetModal');
+        if (modal) {
+          modal.classList.add('hidden');
+          modal.classList.remove('flex');
+        }
+      }
+
+      function renderCharacterSheetBody(char) {
+        const body = document.getElementById('charSheetBody');
+        if (!body) return;
+
+        const statLabels = [
+          { key: 'str', label: 'СИЛ (STR)' },
+          { key: 'dex', label: 'ЛОВ (DEX)' },
+          { key: 'con', label: 'ТЕЛ (CON)' },
+          { key: 'int', label: 'ИНТ (INT)' },
+          { key: 'wis', label: 'МУД (WIS)' },
+          { key: 'cha', label: 'ХАР (CHA)' }
+        ];
+
+        const statsHtml = statLabels
+          .map(({ key, label }) => {
+            const val = char.stats[key] ?? 10;
+            const modStr = formatModifier(val);
+            return `
+              <div class="bg-slate-950 border border-zinc-800 rounded-xl p-2 flex flex-col items-center">
+                <span class="text-[10px] font-bold text-zinc-400 uppercase">${label}</span>
+                <div class="flex items-center gap-1 mt-1">
+                  <input
+                    type="number"
+                    data-stat-key="${key}"
+                    value="${val}"
+                    min="1"
+                    max="30"
+                    class="char-stat-input w-12 text-center bg-zinc-900 text-zinc-100 font-bold text-sm rounded-lg py-1 border border-zinc-700 focus:border-amber-500 focus:outline-none"
+                  >
+                  <button
+                    type="button"
+                    data-roll-stat="${key}"
+                    data-roll-label="${label}"
+                    class="px-1.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 text-xs font-bold"
+                    title="Вставить бросок проверки ${label} в чат"
+                  >
+                    🎲 ${modStr}
+                  </button>
+                </div>
+              </div>
+            `;
+          })
+          .join('');
+
+        // Ячейки заклинаний
+        const slotsListHtml =
+          char.spellSlots.length === 0
+            ? `<div class="text-xs text-zinc-500 italic">Нет ячеек заклинаний (нажмите «+ Круг», чтобы добавить)</div>`
+            : char.spellSlots
+                .map((slot, sIdx) => {
+                  let spheres = '';
+                  for (let i = 0; i < slot.max; i++) {
+                    const active = i < slot.current;
+                    spheres += `
+                      <button
+                        type="button"
+                        data-slot-toggle="${sIdx}"
+                        data-slot-dot="${i}"
+                        class="w-6 h-6 rounded-full flex items-center justify-center border transition-all ${
+                          active
+                            ? 'bg-amber-500 border-amber-300 text-slate-950 font-bold shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                            : 'bg-zinc-900 border-zinc-700 text-zinc-500'
+                        }"
+                        title="Нажмите для переключения ячейки"
+                      >
+                        ●
+                      </button>
+                    `;
+                  }
+                  return `
+                    <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-950 border border-zinc-800 rounded-xl p-2.5">
+                      <div class="flex items-center gap-2">
+                        <span class="text-xs font-bold text-amber-400">${slot.level} круг</span>
+                        <div class="flex items-center gap-1">${spheres}</div>
+                      </div>
+                      <div class="flex items-center gap-1.5 text-xs">
+                        <span class="text-zinc-400">Тек:</span>
+                        <input type="number" data-slot-cur="${sIdx}" value="${slot.current}" min="0" max="${slot.max}" class="w-11 text-center bg-zinc-900 rounded py-0.5 border border-zinc-700 text-zinc-100">
+                        <span class="text-zinc-400">Макс:</span>
+                        <input type="number" data-slot-max="${sIdx}" value="${slot.max}" min="0" max="12" class="w-11 text-center bg-zinc-900 rounded py-0.5 border border-zinc-700 text-zinc-100">
+                        <button type="button" data-slot-remove="${sIdx}" class="text-rose-400 hover:text-rose-300 px-1.5 py-0.5">✕</button>
+                      </div>
+                    </div>
+                  `;
+                })
+                .join('');
+
+        // Состояния (Conditions)
+        const activeConditionsHtml =
+          char.conditions.length === 0
+            ? `<span class="text-xs text-zinc-500 italic">Нет активных состояний</span>`
+            : char.conditions
+                .map(
+                  (c, cIdx) => `
+                  <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-medium">
+                    <span>${escapeHtml(c)}</span>
+                    <button type="button" data-remove-cond="${cIdx}" class="text-amber-200 hover:text-white font-bold ml-0.5">✕</button>
+                  </span>
+                `
+                )
+                .join('');
+
+        const presetCondButtons = DND_CONDITIONS_PRESETS.filter(p => !char.conditions.includes(p))
+          .map(
+            p =>
+              `<button type="button" data-add-preset-cond="${escapeHtml(
+                p
+              )}" class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 text-[11px]">+ ${escapeHtml(
+                p
+              )}</button>`
+          )
+          .join('');
+
+        // Инвентарь
+        const inventoryHtml =
+          char.inventory.length === 0
+            ? `<div class="text-xs text-zinc-500 italic">Рюкзак пуст</div>`
+            : char.inventory
+                .map(
+                  (item, idx) => `
+                  <div class="flex items-center justify-between gap-2 bg-slate-950 border border-zinc-800 rounded-xl px-3 py-2">
+                    <input
+                      type="text"
+                      data-inv-name="${idx}"
+                      value="${escapeHtml(item.name)}"
+                      class="flex-1 bg-transparent text-xs text-zinc-100 focus:outline-none focus:text-amber-300"
+                    >
+                    <div class="flex items-center gap-1 shrink-0">
+                      <button type="button" data-inv-dec="${idx}" class="w-6 h-6 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold">-</button>
+                      <span class="w-7 text-center text-xs font-bold text-amber-400">x${item.qty}</span>
+                      <button type="button" data-inv-inc="${idx}" class="w-6 h-6 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold">+</button>
+                      <button type="button" data-inv-del="${idx}" class="w-6 h-6 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-bold ml-1">✕</button>
+                    </div>
+                  </div>
+                `
+                )
+                .join('');
+
+        body.innerHTML = `
+          <!-- Имя, Класс и КД -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div>
+              <label class="block text-[11px] text-zinc-400 mb-1">Имя героя</label>
+              <input id="sheetCharName" type="text" value="${escapeHtml(char.name)}" class="w-full bg-slate-950 text-zinc-100 text-xs font-semibold rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-[11px] text-zinc-400 mb-1">Раса / Класс и уровень</label>
+              <input id="sheetCharClass" type="text" value="${escapeHtml(char.class)}" class="w-full bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-[11px] text-zinc-400 mb-1">Класс Доспеха (КД / AC)</label>
+              <input id="sheetCharAc" type="number" min="1" max="35" value="${char.ac}" class="w-full bg-slate-950 text-amber-400 font-bold text-xs rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+          </div>
+		  
+		  <!-- Суть для ГМа -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-[11px] font-bold text-amber-400">Суть для Мастера (улетает в контекст)</label>
+              <span class="text-[10px] text-zinc-500">Характер, манеры, 1-2 предложения</span>
+            </div>
+            <textarea
+              id="sheetCharShortBio"
+              rows="2"
+              placeholder="Например: Циничная, говорит тихо и резко. Терпеть не может культистов..."
+              class="w-full bg-slate-950 text-zinc-100 placeholder-zinc-600 text-xs rounded-xl px-3 py-2 border border-amber-500/30 focus:border-amber-500 focus:outline-none resize-none leading-relaxed"
+            >${escapeHtml(char.shortBio || '')}</textarea>
+          </div>
+
+          <!-- Полная предыстория -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-[11px] font-medium text-zinc-400">Полная квента (хранится локально, токены не ест)</label>
+              <span class="text-[10px] text-zinc-500">Для себя</span>
+            </div>
+            <textarea
+              id="sheetCharFullBio"
+              rows="10"
+              placeholder="Предыстория с рождения, заметки, тайны, контакты..."
+              class="w-full bg-slate-950 text-zinc-100 placeholder-zinc-600 text-xs rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none resize-none thin-scrollbar leading-relaxed"
+            >${escapeHtml(char.fullBio || '')}</textarea>
+          </div>
+
+          <!-- Здоровье (HP) -->
+          <div class="bg-slate-950/90 border border-zinc-800 rounded-xl p-3 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-zinc-200">Очки Здоровья (HP)</span>
+              <div class="flex items-center gap-1.5">
+                <input id="sheetHpCur" type="number" min="0" max="999" value="${char.hp.current}" class="w-14 text-center bg-zinc-900 text-emerald-400 font-bold text-xs rounded-lg py-1 border border-zinc-700">
+                <span class="text-zinc-500 font-bold">/</span>
+                <input id="sheetHpMax" type="number" min="1" max="999" value="${char.hp.max}" class="w-14 text-center bg-zinc-900 text-zinc-200 font-bold text-xs rounded-lg py-1 border border-zinc-700">
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5 pt-1">
+              <button type="button" data-hp-delta="-5" class="hp-quick-btn px-2.5 py-1 rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 border border-rose-800/60 text-xs font-bold">-5 HP</button>
+              <button type="button" data-hp-delta="-1" class="hp-quick-btn px-2.5 py-1 rounded-lg bg-rose-950/70 hover:bg-rose-900 text-rose-300 border border-rose-800/60 text-xs font-bold">-1 HP</button>
+              <button type="button" data-hp-delta="1" class="hp-quick-btn px-2.5 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/60 text-xs font-bold">+1 HP</button>
+              <button type="button" data-hp-delta="5" class="hp-quick-btn px-2.5 py-1 rounded-lg bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border border-emerald-800/60 text-xs font-bold">+5 HP</button>
+              <button type="button" id="btnSheetFullHeal" class="ml-auto px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 text-xs font-semibold">Полное HP</button>
+            </div>
+          </div>
+
+          <!-- Характеристики (Stats) -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-zinc-200">Характеристики и быстрые проверки</span>
+              <span class="text-[10px] text-zinc-400">Тап по 🎲 вставляет бросок в чат</span>
+            </div>
+            <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              ${statsHtml}
+            </div>
+          </div>
+
+          <!-- Ячейки заклинаний -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-zinc-200">Ячейки заклинаний (Spell Slots)</span>
+              <button type="button" id="btnAddSpellSlotLevel" class="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 border border-zinc-700 text-xs font-semibold">+ Круг</button>
+            </div>
+            <div class="space-y-1.5">
+              ${slotsListHtml}
+            </div>
+          </div>
+
+          <!-- Состояния (Conditions) -->
+          <div class="space-y-2">
+            <span class="block text-xs font-bold text-zinc-200">Состояния и эффекты (Conditions)</span>
+            <div class="flex flex-wrap gap-1.5">${activeConditionsHtml}</div>
+            <div class="flex gap-1.5">
+              <input id="inputNewCondition" type="text" placeholder="Добавить состояние..." class="flex-1 bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-1.5 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+              <button type="button" id="btnAddCondition" class="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">Добавить</button>
+            </div>
+            <div class="flex flex-wrap gap-1 pt-0.5">${presetCondButtons}</div>
+          </div>
+
+          <!-- Валюта (Кошелёк) -->
+          <div class="space-y-1.5">
+            <span class="block text-xs font-bold text-zinc-200">Монеты (Кошелёк)</span>
+            <div class="grid grid-cols-3 gap-2">
+              <div class="bg-slate-950 border border-zinc-800 rounded-xl p-2 flex items-center justify-between">
+                <span class="text-xs font-bold text-amber-400">🪙 ЗМ (GP)</span>
+                <input id="sheetCoinGp" type="number" min="0" value="${char.currency.gp}" class="w-16 text-right bg-zinc-900 text-zinc-100 font-bold text-xs rounded-lg px-2 py-1 border border-zinc-700">
+              </div>
+              <div class="bg-slate-950 border border-zinc-800 rounded-xl p-2 flex items-center justify-between">
+                <span class="text-xs font-bold text-zinc-300">🥈 СМ (SP)</span>
+                <input id="sheetCoinSp" type="number" min="0" value="${char.currency.sp}" class="w-16 text-right bg-zinc-900 text-zinc-100 font-bold text-xs rounded-lg px-2 py-1 border border-zinc-700">
+              </div>
+              <div class="bg-slate-950 border border-zinc-800 rounded-xl p-2 flex items-center justify-between">
+                <span class="text-xs font-bold text-amber-700">🥉 ММ (CP)</span>
+                <input id="sheetCoinCp" type="number" min="0" value="${char.currency.cp}" class="w-16 text-right bg-zinc-900 text-zinc-100 font-bold text-xs rounded-lg px-2 py-1 border border-zinc-700">
+              </div>
+            </div>
+          </div>
+
+          <!-- Инвентарь -->
+          <div class="space-y-2 pb-2">
+            <span class="block text-xs font-bold text-zinc-200">Инвентарь и снаряжение</span>
+            <div class="space-y-1.5">${inventoryHtml}</div>
+            <div class="flex gap-1.5 pt-1">
+              <input id="inputNewItemName" type="text" placeholder="Новый предмет..." class="flex-1 bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+              <input id="inputNewItemQty" type="number" min="1" value="1" class="w-16 text-center bg-slate-950 text-zinc-100 text-xs rounded-xl px-2 py-2 border border-zinc-700">
+              <button type="button" id="btnAddInvItem" class="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0">+ Предмет</button>
+            </div>
+          </div>
+        `;
+
+        bindCharacterSheetEvents(char);
+      }
+
+      function syncAndRefreshSheet(char, reRenderSheet = true) {
+        saveCampaign();
+        renderHud();
+        if (reRenderSheet && activeEditingCharId === char.id) {
+          const title = document.getElementById('sheetHeaderTitle');
+          if (title) title.textContent = `${char.name} — Редактор`;
+          renderCharacterSheetBody(char);
+        }
+      }
+
+      function bindCharacterSheetEvents(char) {
+        const body = document.getElementById('charSheetBody');
+        if (!body) return;
+
+        // Имя, Класс, КД
+        const nameInput = document.getElementById('sheetCharName');
+        const classInput = document.getElementById('sheetCharClass');
+        const acInput = document.getElementById('sheetCharAc');
+		const shortBioInput = document.getElementById('sheetCharShortBio');
+        if (shortBioInput) {
+          shortBioInput.addEventListener('input', () => {
+            char.shortBio = shortBioInput.value;
+            syncAndRefreshSheet(char, false);
+          });
+        }
+
+        const fullBioInput = document.getElementById('sheetCharFullBio');
+        if (fullBioInput) {
+          fullBioInput.addEventListener('input', () => {
+            char.fullBio = fullBioInput.value;
+            syncAndRefreshSheet(char, false);
+          });
+        }
+
+        if (nameInput) {
+          nameInput.addEventListener('input', () => {
+            char.name = nameInput.value.trim() || 'Герой';
+            syncAndRefreshSheet(char, false);
+            const title = document.getElementById('sheetHeaderTitle');
+            if (title) title.textContent = `${char.name} — Редактор`;
+          });
+        }
+        if (classInput) {
+          classInput.addEventListener('input', () => {
+            char.class = classInput.value.trim();
+            syncAndRefreshSheet(char, false);
+          });
+        }
+        if (acInput) {
+          acInput.addEventListener('input', () => {
+            char.ac = Math.max(1, parseInt(acInput.value, 10) || 10);
+            syncAndRefreshSheet(char, false);
+          });
+        }
+
+        // HP
+        const hpCurInput = document.getElementById('sheetHpCur');
+        const hpMaxInput = document.getElementById('sheetHpMax');
+        if (hpCurInput) {
+          hpCurInput.addEventListener('change', () => {
+            char.hp.current = Math.max(0, Math.min(char.hp.max, parseInt(hpCurInput.value, 10) || 0));
+            syncAndRefreshSheet(char, true);
+          });
+        }
+        if (hpMaxInput) {
+          hpMaxInput.addEventListener('change', () => {
+            char.hp.max = Math.max(1, parseInt(hpMaxInput.value, 10) || 1);
+            if (char.hp.current > char.hp.max) char.hp.current = char.hp.max;
+            syncAndRefreshSheet(char, true);
+          });
+        }
+
+        body.querySelectorAll('.hp-quick-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const delta = parseInt(btn.getAttribute('data-hp-delta'), 10) || 0;
+            char.hp.current = Math.max(0, Math.min(char.hp.max, char.hp.current + delta));
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        const btnFullHeal = document.getElementById('btnSheetFullHeal');
+        if (btnFullHeal) {
+          btnFullHeal.addEventListener('click', () => {
+            char.hp.current = char.hp.max;
+            syncAndRefreshSheet(char, true);
+          });
+        }
+
+        // Статы
+        body.querySelectorAll('.char-stat-input').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const k = inp.getAttribute('data-stat-key');
+            char.stats[k] = Math.max(1, Math.min(30, parseInt(inp.value, 10) || 10));
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        // Бросок проверки характеристики прямо из шторки
+        body.querySelectorAll('[data-roll-stat]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const k = btn.getAttribute('data-roll-stat');
+            const label = btn.getAttribute('data-roll-label');
+            const score = char.stats[k] ?? 10;
+            const mod = Math.floor((score - 10) / 2);
+            const roll = Math.floor(Math.random() * 20) + 1;
+            const total = roll + mod;
+            const sign = mod >= 0 ? `+${mod}` : `${mod}`;
+            insertTextIntoChat(`[${char.name} — Проверка ${label}: d20(${roll}) ${sign} = ${total}]`);
+            closeCharacterSheet();
+            showToast(`Бросок ${label}: ${roll} (${sign}) = ${total}`, 'info');
+          });
+        });
+
+        // Ячейки заклинаний
+        const btnAddSlot = document.getElementById('btnAddSpellSlotLevel');
+        if (btnAddSlot) {
+          btnAddSlot.addEventListener('click', () => {
+            const nextLevel = char.spellSlots.length > 0 ? Math.max(...char.spellSlots.map(s => s.level)) + 1 : 1;
+            char.spellSlots.push({ level: Math.min(9, nextLevel), max: 2, current: 2 });
+            syncAndRefreshSheet(char, true);
+          });
+        }
+
+        body.querySelectorAll('[data-slot-toggle]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const sIdx = parseInt(btn.getAttribute('data-slot-toggle'), 10);
+            const dotIdx = parseInt(btn.getAttribute('data-slot-dot'), 10);
+            const slot = char.spellSlots[sIdx];
+            if (!slot) return;
+            if (dotIdx < slot.current) {
+              slot.current = dotIdx;
+            } else {
+              slot.current = dotIdx + 1;
+            }
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        body.querySelectorAll('[data-slot-cur]').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const sIdx = parseInt(inp.getAttribute('data-slot-cur'), 10);
+            const slot = char.spellSlots[sIdx];
+            if (!slot) return;
+            slot.current = Math.max(0, Math.min(slot.max, parseInt(inp.value, 10) || 0));
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        body.querySelectorAll('[data-slot-max]').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const sIdx = parseInt(inp.getAttribute('data-slot-max'), 10);
+            const slot = char.spellSlots[sIdx];
+            if (!slot) return;
+            slot.max = Math.max(0, Math.min(12, parseInt(inp.value, 10) || 0));
+            if (slot.current > slot.max) slot.current = slot.max;
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        body.querySelectorAll('[data-slot-remove]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const sIdx = parseInt(btn.getAttribute('data-slot-remove'), 10);
+            char.spellSlots.splice(sIdx, 1);
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        // Состояния
+        const btnAddCond = document.getElementById('btnAddCondition');
+        const inputNewCond = document.getElementById('inputNewCondition');
+        if (btnAddCond && inputNewCond) {
+          const addCondFn = () => {
+            const val = inputNewCond.value.trim();
+            if (val && !char.conditions.includes(val)) {
+              char.conditions.push(val);
+              syncAndRefreshSheet(char, true);
+            }
+          };
+          btnAddCond.addEventListener('click', addCondFn);
+          inputNewCond.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addCondFn();
+            }
+          });
+        }
+
+        body.querySelectorAll('[data-add-preset-cond]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const cond = btn.getAttribute('data-add-preset-cond');
+            if (cond && !char.conditions.includes(cond)) {
+              char.conditions.push(cond);
+              syncAndRefreshSheet(char, true);
+            }
+          });
+        });
+
+        body.querySelectorAll('[data-remove-cond]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-remove-cond'), 10);
+            char.conditions.splice(idx, 1);
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        // Монеты
+        const gpInput = document.getElementById('sheetCoinGp');
+        const spInput = document.getElementById('sheetCoinSp');
+        const cpInput = document.getElementById('sheetCoinCp');
+        [
+          [gpInput, 'gp'],
+          [spInput, 'sp'],
+          [cpInput, 'cp']
+        ].forEach(([el, coinKey]) => {
+          if (el) {
+            el.addEventListener('change', () => {
+              char.currency[coinKey] = Math.max(0, parseInt(el.value, 10) || 0);
+              syncAndRefreshSheet(char, false);
+            });
+          }
+        });
+
+        // Инвентарь
+        body.querySelectorAll('[data-inv-name]').forEach(inp => {
+          inp.addEventListener('change', () => {
+            const idx = parseInt(inp.getAttribute('data-inv-name'), 10);
+            const val = inp.value.trim();
+            if (val) {
+              char.inventory[idx].name = val;
+              syncAndRefreshSheet(char, false);
+            }
+          });
+        });
+
+        body.querySelectorAll('[data-inv-inc]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-inv-inc'), 10);
+            char.inventory[idx].qty += 1;
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        body.querySelectorAll('[data-inv-dec]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-inv-dec'), 10);
+            if (char.inventory[idx].qty > 1) {
+              char.inventory[idx].qty -= 1;
+            } else {
+              char.inventory.splice(idx, 1);
+            }
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        body.querySelectorAll('[data-inv-del]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-inv-del'), 10);
+            char.inventory.splice(idx, 1);
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        const btnAddInv = document.getElementById('btnAddInvItem');
+        const inpInvName = document.getElementById('inputNewItemName');
+        const inpInvQty = document.getElementById('inputNewItemQty');
+        if (btnAddInv && inpInvName && inpInvQty) {
+          const addItemFn = () => {
+            const name = inpInvName.value.trim();
+            const qty = Math.max(1, parseInt(inpInvQty.value, 10) || 1);
+            if (!name) return;
+            const existing = char.inventory.find(i => i.name.toLowerCase() === name.toLowerCase());
+            if (existing) {
+              existing.qty += qty;
+            } else {
+              char.inventory.push({ name, qty });
+            }
+            syncAndRefreshSheet(char, true);
+          };
+          btnAddInv.addEventListener('click', addItemFn);
+          inpInvName.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addItemFn();
+            }
+          });
+        }
+      }
+
+      // ---------------------------------------------------------------------------
+      // 8. ПАРСЕР ОТВЕТА LLM И ПРИМЕНЕНИЕ STATE_UPDATE (Раздел 4 ТЗ)
+      // ---------------------------------------------------------------------------
+      function findCharacterBySubstring(queryName) {
+        if (!queryName || typeof queryName !== 'string') return null;
+        const q = queryName.trim().toLowerCase();
+        if (!q) return null;
+        return (
+          campaign.party.find(c => c.name.toLowerCase().includes(q) || q.includes(c.name.toLowerCase())) || null
+        );
+      }
+
+      function parseLlmStructuredResponse(rawText) {
+        if (typeof rawText !== 'string' || !rawText.trim()) {
+          return {
+            ok: false,
+            narrative: '*(Пустой ответ от модели)*',
+            state_update: null
+          };
+        }
+
+        let cleaned = rawText.trim();
+
+        // 1. Очистка от обёртки ```json ... ``` или ``` ... ```
+        const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fencedMatch && fencedMatch[1]) {
+          cleaned = fencedMatch[1].trim();
+        } else {
+          // Если вокруг JSON есть лишний текст, пробуем вырезать от первой { до последней }
+          const firstBrace = cleaned.indexOf('{');
+          const lastBrace = cleaned.lastIndexOf('}');
+          if (firstBrace !== -1 && lastBrace > firstBrace) {
+            cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+          }
+        }
+
+        try {
+          const parsed = JSON.parse(cleaned);
+          if (parsed && typeof parsed === 'object' && typeof parsed.narrative === 'string') {
+            return {
+              ok: true,
+              narrative: parsed.narrative,
+              state_update: parsed.state_update && typeof parsed.state_update === 'object' ? parsed.state_update : null
+            };
+          }
+        } catch (err) {
+          // JSON повреждён или модель ответила чистым текстом
+        }
+
+        return {
+          ok: false,
+          narrative: rawText.trim(),
+          state_update: null
+        };
+      }
+
+      function applyStateUpdate(stateUpdate) {
+        if (!stateUpdate || typeof stateUpdate !== 'object') return [];
+        const auditBadges = [];
+
+        // 1. Изменения персонажей (character_changes)
+        if (Array.isArray(stateUpdate.character_changes)) {
+          stateUpdate.character_changes.forEach(change => {
+            const char = findCharacterBySubstring(change?.name);
+            if (!char) return;
+            const shortName = char.name.split(' ')[0];
+
+            // HP delta
+            const hpDelta = parseInt(change.hp_delta, 10) || 0;
+            if (hpDelta !== 0) {
+              const prevHp = char.hp.current;
+              char.hp.current = Math.max(0, Math.min(char.hp.max, char.hp.current + hpDelta));
+              const actualDelta = char.hp.current - prevHp;
+              const sign = hpDelta > 0 ? `+${hpDelta}` : `${hpDelta}`;
+              auditBadges.push(`[${shortName}: ${sign} HP]`);
+              void actualDelta;
+            }
+
+            // Потраченные ячейки заклинаний: spell_slots_spent: { "1": 1 }
+            if (change.spell_slots_spent && typeof change.spell_slots_spent === 'object') {
+              Object.entries(change.spell_slots_spent).forEach(([lvlKey, countVal]) => {
+                const lvl = parseInt(lvlKey, 10);
+                const spent = parseInt(countVal, 10) || 0;
+                if (lvl > 0 && spent !== 0) {
+                  let slotObj = char.spellSlots.find(s => s.level === lvl);
+                  if (!slotObj && spent < 0) {
+                    slotObj = { level: lvl, max: Math.abs(spent), current: 0 };
+                    char.spellSlots.push(slotObj);
+                  }
+                  if (slotObj) {
+                    slotObj.current = Math.max(0, Math.min(slotObj.max, slotObj.current - spent));
+                    const sign = spent > 0 ? `-${spent}` : `+${Math.abs(spent)}`;
+                    auditBadges.push(`[${shortName}: ${sign} ячейка ${lvl}ур]`);
+                  }
+                }
+              });
+            }
+
+            // Добавление состояний (conditions_add)
+            if (Array.isArray(change.conditions_add)) {
+              change.conditions_add.forEach(cond => {
+                const cStr = String(cond || '').trim();
+                if (cStr && !char.conditions.includes(cStr)) {
+                  char.conditions.push(cStr);
+                  auditBadges.push(`[${shortName}: +${cStr}]`);
+                }
+              });
+            }
+
+            // Снятие состояний (conditions_remove)
+            if (Array.isArray(change.conditions_remove)) {
+              change.conditions_remove.forEach(cond => {
+                const cStr = String(cond || '').trim().toLowerCase();
+                const idx = char.conditions.findIndex(existing => existing.toLowerCase() === cStr);
+                if (idx !== -1) {
+                  const removed = char.conditions.splice(idx, 1)[0];
+                  auditBadges.push(`[${shortName}: -${removed}]`);
+                }
+              });
+            }
+          });
+        }
+
+        // 2. Добавление предметов (inventory_add)
+        if (Array.isArray(stateUpdate.inventory_add)) {
+          stateUpdate.inventory_add.forEach(entry => {
+            const char = findCharacterBySubstring(entry?.char_name) || campaign.party[0];
+            const itemName = String(entry?.item || '').trim();
+            const qty = Math.max(1, parseInt(entry?.qty, 10) || 1);
+            if (char && itemName) {
+              const shortName = char.name.split(' ')[0];
+              const existing = char.inventory.find(i => i.name.toLowerCase() === itemName.toLowerCase());
+              if (existing) {
+                existing.qty += qty;
+              } else {
+                char.inventory.push({ name: itemName, qty });
+              }
+              auditBadges.push(`[${shortName}: +${itemName}${qty > 1 ? ' x' + qty : ''}]`);
+            }
+          });
+        }
+
+        // 3. Удаление предметов (inventory_remove)
+        if (Array.isArray(stateUpdate.inventory_remove)) {
+          stateUpdate.inventory_remove.forEach(entry => {
+            const char = findCharacterBySubstring(entry?.char_name);
+            const itemName = String(entry?.item || '').trim();
+            const qty = Math.max(1, parseInt(entry?.qty, 10) || 1);
+            if (char && itemName) {
+              const shortName = char.name.split(' ')[0];
+              const idx = char.inventory.findIndex(i => i.name.toLowerCase().includes(itemName.toLowerCase()));
+              if (idx !== -1) {
+                if (char.inventory[idx].qty > qty) {
+                  char.inventory[idx].qty -= qty;
+                } else {
+                  char.inventory.splice(idx, 1);
+                }
+                auditBadges.push(`[${shortName}: -${itemName}${qty > 1 ? ' x' + qty : ''}]`);
+              }
+            }
+          });
+        }
+
+        // 4. Изменение монет (currency_delta)
+        if (stateUpdate.currency_delta && typeof stateUpdate.currency_delta === 'object' && campaign.party.length > 0) {
+          const targetChar = campaign.party[0];
+          ['gp', 'sp', 'cp'].forEach(coin => {
+            const delta = parseInt(stateUpdate.currency_delta[coin], 10) || 0;
+            if (delta !== 0) {
+              targetChar.currency[coin] = Math.max(0, (targetChar.currency[coin] || 0) + delta);
+              const sign = delta > 0 ? `+${delta}` : `${delta}`;
+              auditBadges.push(`[Монеты: ${sign} ${coin}]`);
+            }
+          });
+        }
+
+        // 5. Обновление локации (location_update)
+        if (typeof stateUpdate.location_update === 'string' && stateUpdate.location_update.trim()) {
+          const newLoc = stateUpdate.location_update.trim();
+          if (newLoc !== campaign.world.location) {
+            campaign.world.location = newLoc;
+            auditBadges.push(`[Локация: ${newLoc}]`);
+          }
+        }
+
+        return auditBadges;
+      }
+
+      // ---------------------------------------------------------------------------
+      // 9. АВТОНОМНЫЙ СИМУЛЯТОР ОТВЕТА ГМа (ДЛЯ ДЕМО-РЕЖИМА БЕЗ КЛЮЧА)
+      // ---------------------------------------------------------------------------
+      function buildDemoGmResponse(userText) {
+        const lower = userText.toLowerCase();
+        const rollMatch = userText.match(/d20[:(]\s*(\d+)/i);
+        const rollVal = rollMatch ? parseInt(rollMatch[1], 10) : null;
+
+        const liora = findCharacterBySubstring('Лиора') || campaign.party[0];
+        const vel = findCharacterBySubstring('Вэл') || campaign.party[1] || campaign.party[0];
+
+        if (lower.includes('леч') || lower.includes('исцел') || lower.includes('молитв') || lower.includes('заклинан')) {
+          return JSON.stringify({
+            narrative:
+              '### Свет Исцеления\n\n**Лиора Эстель** возносит тихую молитву и касается ладонью плеча спутника. Тёплое янтарное сияние окутывает раны, затягивая порезы и возвращая бодрость.\n\n> За соседним столом незнакомец в плаще с уважением склоняет голову, заметив божественный дар эльфийки.',
+            state_update: {
+              character_changes: [
+                {
+                  name: liora ? liora.name : 'Лиора Эстель',
+                  hp_delta: 0,
+                  spell_slots_spent: { '1': 1 },
+                  conditions_add: ['Благословение'],
+                  conditions_remove: []
+                },
+                {
+                  name: vel ? vel.name : 'Вэл',
+                  hp_delta: 4,
+                  conditions_add: [],
+                  conditions_remove: ['Настороже']
+                }
+              ],
+              inventory_add: [],
+              inventory_remove: [],
+              currency_delta: { gp: 0, sp: 0, cp: 0 },
+              location_update: ''
+            }
+          });
+        }
+
+        if (lower.includes('атак') || lower.includes('меч') || lower.includes('удар') || lower.includes('бой')) {
+          const hitSuccess = rollVal === null || rollVal >= 11;
+          if (hitSuccess) {
+            return JSON.stringify({
+              narrative: `### Схватка в полумраке\n\n${
+                rollVal ? `С броском **${rollVal}** ` : ''
+              }**Вэл** молниеносно перехватывает рукоять полуторного меча и обрушивает удар на наёмника, опрокидывая дубовый стол! Враг отступает к дверям, роняя на пол старый ключ, но успевает полоснуть кинжалом в ответ.`,
+              state_update: {
+                character_changes: [
+                  {
+                    name: vel ? vel.name : 'Вэл',
+                    hp_delta: -3,
+                    conditions_add: ['Настороже'],
+                    conditions_remove: []
+                  }
+                ],
+                inventory_add: [{ char_name: vel ? vel.name : 'Вэл', item: 'Ржавый ключ', qty: 1 }],
+                inventory_remove: [],
+                currency_delta: { gp: 0, sp: 0, cp: 0 },
+                location_update: '«Хромая Собака», Главный зал'
+              }
+            });
+          } else {
+            return JSON.stringify({
+              narrative: `### Опасный промах\n\nБросок **${rollVal}** оказывается недостаточным — клинок скользит по сырым половицам, и противник контратакует эфесом! **Вэл** получает чувствительный удар в плечо.`,
+              state_update: {
+                character_changes: [
+                  {
+                    name: vel ? vel.name : 'Вэл',
+                    hp_delta: -4,
+                    conditions_add: ['Настороже'],
+                    conditions_remove: []
+                  }
+                ],
+                inventory_add: [],
+                inventory_remove: [],
+                currency_delta: { gp: 0, sp: 0, cp: 0 },
+                location_update: ''
+              }
+            });
+          }
+        }
+
+        // Стандартный сюжетный ответ с интерактивным развитием сцены
+        return JSON.stringify({
+          narrative:
+            `### Разговор у камина\n\n${
+              rollVal ? `*(Учтён результат броска: **${rollVal}**)*\n\n` : ''
+            }Незнакомец в промокшем плаще представляется как **Маркус, смотритель старого маяка**. Он понижает голос и двигает по столу потёртую карту береговой линии, заказывая вам по кружке горячего пряного эля.\n\n` +
+            `- В подвалах под заброшенной часовней видели огни контрабандистов.\n` +
+            `- Он передаёт **Вэлу** железный ключ от боковых ворот и просит проверить склеп до рассвета.\n\n` +
+            `*Согласитесь ли вы отправиться к часовне сейчас или расспросите трактирщика?*`,
+          state_update: {
+            character_changes: [
+              {
+                name: vel ? vel.name : 'Вэл',
+                hp_delta: 0,
+                conditions_add: ['Настороже'],
+                conditions_remove: []
+              }
+            ],
+            inventory_add: [{ char_name: vel ? vel.name : 'Вэл', item: 'Ключ смотрителя', qty: 1 }],
+            inventory_remove: [],
+            currency_delta: { gp: 0, sp: -2, cp: 0 },
+            location_update: '«Хромая Собака», Угол у камина'
+          }
+        });
+      }
+
+      // ---------------------------------------------------------------------------
+      // 10. ОТПРАВКА ХОДА В LLM API (SLIDING WINDOW 8 СООБЩЕНИЙ)
+      // ---------------------------------------------------------------------------
+      async function handleSendTurn(userText) {
+        if (isGenerating || !userText.trim()) return;
+
+        // 1. Сохраняем снимок состояния для Отката хода (Undo) перед ходом
+        createSnapshot();
+
+        // 2. Добавляем сообщение пользователя в историю
+        campaign.chatHistory.push({
+          role: 'user',
+          content: userText.trim(),
+          stateDeltaSummary: ''
+        });
+        saveCampaign();
+        renderChat(true);
+
+        // 3. Блокируем ввод и включаем спиннер
+        isGenerating = true;
+        updateUndoButtonState();
+        const inputEl = document.getElementById('chatInput');
+        const sendBtn = document.getElementById('btnSendMessage');
+        const loadingEl = document.getElementById('loadingIndicator');
+        if (inputEl) {
+          inputEl.value = '';
+          inputEl.style.height = 'auto';
+          inputEl.disabled = true;
+        }
+        if (sendBtn) sendBtn.disabled = true;
+        if (loadingEl) loadingEl.classList.remove('hidden');
+
+        try {
+          // Формируем сжатый контекст текущего мира и партии + строго последние 8 сообщений
+		  const partyForLlm = campaign.party.map(({ fullBio, ...rest }) => rest);
+		  
+          const compactStateJson = JSON.stringify({
+            campaignName: campaign.campaignName,
+            world: campaign.world,
+            party: partyForLlm
+          });
+
+          const slidingHistory = campaign.chatHistory.slice(-8).map(m => ({
+            role: m.role,
+            content: m.content
+          }));
+
+          const messagesPayload = [
+            {
+              role: 'system',
+              content: `${SYSTEM_PROMPT}\n\nТЕКУЩЕЕ СОСТОЯНИЕ ПАРТИИ И МИРА (JSON):\n${compactStateJson}`
+            },
+            ...slidingHistory
+          ];
+
+          let rawModelContent = '';
+          const hasApiKey = Boolean(credentials.apiKey && credentials.apiKey.trim());
+
+          if (!credentials.demoMode) {
+            const headers = { 'Content-Type': 'application/json' };
+            if (hasApiKey) {
+              headers['Authorization'] = `Bearer ${credentials.apiKey.trim()}`;
+            }
+
+            const response = await fetch(credentials.apiUrl, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                model: credentials.model || 'gpt-4o-mini',
+                messages: messagesPayload,
+                temperature: 0.7,
+				response_format: { type: "json_object" }
+              })
+            });
+
+            if (!response.ok) {
+              const errText = await response.text().catch(() => '');
+              throw new Error(`Ошибка API (${response.status}): ${errText.slice(0, 140) || response.statusText}`);
+            }
+
+            const data = await response.json();
+            rawModelContent =
+              data?.choices?.[0]?.message?.content ||
+              data?.message?.content ||
+              data?.content?.[0]?.text ||
+              JSON.stringify(data);
+          } else {
+            // Автономный демо-режим ГМа (с реалистичной паузой)
+            await new Promise(resolve => setTimeout(resolve, 650));
+            rawModelContent = buildDemoGmResponse(userText);
+          }
+
+          processRawGmOutput(rawModelContent);
+        } catch (err) {
+          campaign.chatHistory.push({
+            role: 'assistant',
+            content: `**Ошибка связи с LLM API:** ${err.message}\n\n*Проверьте URL, API Key и настройки CORS в меню ⚙️ или включите «Автономный Демо-ГМ».*`,
+            stateDeltaSummary: '[Не удалось автоматически обновить статы]'
+          });
+          showToast('Ошибка запроса к API. Проверьте настройки ⚙️', 'error');
+        } finally {
+          isGenerating = false;
+          if (inputEl) {
+            inputEl.disabled = false;
+            inputEl.focus();
+          }
+          if (sendBtn) sendBtn.disabled = false;
+          if (loadingEl) loadingEl.classList.add('hidden');
+          saveCampaign();
+          renderHud();
+          renderChat(true);
+          updateUndoButtonState();
+        }
+      }
+
+      function processRawGmOutput(rawModelContent) {
+        const parsed = parseLlmStructuredResponse(rawModelContent);
+        let stateDeltaSummary = '';
+
+        if (parsed.ok) {
+          const badges = applyStateUpdate(parsed.state_update);
+          stateDeltaSummary = badges.join(' ');
+        } else {
+          // Мягкое предупреждение по ТЗ, если JSON повреждён или чистый текст
+          stateDeltaSummary = '[Не удалось автоматически обновить статы]';
+          showToast('Не удалось автоматически обновить статы (ответ не в JSON)', 'warning');
+        }
+
+        campaign.chatHistory.push({
+          role: 'assistant',
+          content: parsed.narrative,
+          stateDeltaSummary
+        });
+      }
+
+      // ---------------------------------------------------------------------------
+      // 11. ОТКАТ ХОДА (UNDO), КОРОТКИЙ ОТДЫХ, КУБИК D20 И НАСТРОЙКИ
+      // ---------------------------------------------------------------------------
+      function handleUndoTurn() {
+        if (!lastSnapshot || isGenerating) return;
+        campaign = deepClone(lastSnapshot);
+        saveCampaign();
+        clearSnapshot();
+        renderHud();
+        renderChat(true);
+        showToast('Ход откачен: характеристики и история восстановлены', 'info');
+      }
+
+      function insertTextIntoChat(snippet) {
+        const inputEl = document.getElementById('chatInput');
+        if (!inputEl || inputEl.disabled) return;
+        const cur = inputEl.value;
+        const prefix = cur && !cur.endsWith(' ') ? ' ' : '';
+        inputEl.value = cur + prefix + snippet;
+        autoResizeTextarea(inputEl);
+        inputEl.focus();
+      }
+
+      function autoResizeTextarea(el) {
+        if (!el) return;
+        el.style.height = 'auto';
+        const maxHeight = 72; // ~3 строки
+        el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px';
+      }
+
+      // Модальное окно «Короткий отдых» (трата костей хитов / восстановление ресурсов)
+      function openShortRestModal() {
+        const modal = document.getElementById('auxModal');
+        const title = document.getElementById('auxModalTitle');
+        const body = document.getElementById('auxModalBody');
+        if (!modal || !title || !body) return;
+
+        title.textContent = '⛺ Короткий отдых (1 час)';
+
+        const renderRestContent = () => {
+          const cards = campaign.party
+            .map(char => {
+              const conMod = Math.floor(((char.stats.con || 10) - 10) / 2);
+              const conSign = conMod >= 0 ? `+${conMod}` : `${conMod}`;
+              return `
+                <div class="bg-slate-950 border border-zinc-800 rounded-xl p-3 flex items-center justify-between gap-2">
+                  <div>
+                    <div class="font-bold text-zinc-100 text-xs">${escapeHtml(char.name)}</div>
+                    <div class="text-[11px] text-zinc-400">HP: <strong class="text-emerald-400">${char.hp.current}/${char.hp.max}</strong> • Бонус ТЕЛ: ${conSign}</div>
+                  </div>
+                  <button
+                    type="button"
+                    data-hit-die-char="${char.id}"
+                    class="px-2.5 py-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-xs font-bold shrink-0"
+                  >
+                    🎲 Кость хитов (d8${conSign})
+                  </button>
+                </div>
+              `;
+            })
+            .join('');
+
+          body.innerHTML = `
+            <p class="text-zinc-400 leading-relaxed">
+              Герои перевязывают раны и переводят дух. Вы можете потратить <strong>Кости Хитов</strong> для каждого персонажа или завершить короткий отдых с восстановлением сил.
+            </p>
+            <div class="space-y-2">${cards}</div>
+            <div class="pt-2 flex gap-2">
+              <button type="button" id="btnFinishShortRest" class="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">
+                Завершить короткий отдых (+1 ячейка 1ур и лог в чат)
+              </button>
+            </div>
+          `;
+
+          body.querySelectorAll('[data-hit-die-char]').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const cId = btn.getAttribute('data-hit-die-char');
+              const char = campaign.party.find(c => c.id === cId);
+              if (!char) return;
+              createSnapshot();
+              const conMod = Math.floor(((char.stats.con || 10) - 10) / 2);
+              const roll = Math.floor(Math.random() * 8) + 1;
+              const heal = Math.max(1, roll + conMod);
+              const prev = char.hp.current;
+              char.hp.current = Math.min(char.hp.max, char.hp.current + heal);
+              const gained = char.hp.current - prev;
+              saveCampaign();
+              renderHud();
+              renderRestContent();
+              showToast(`${char.name}: бросок Кости Хитов ${roll} (${conMod >= 0 ? '+' + conMod : conMod}) → +${gained} HP`, 'success');
+            });
+          });
+
+          const btnFinish = document.getElementById('btnFinishShortRest');
+          if (btnFinish) {
+            btnFinish.addEventListener('click', () => {
+              createSnapshot();
+              const audit = [];
+              campaign.party.forEach(char => {
+                const shortName = char.name.split(' ')[0];
+                if (char.hp.current < char.hp.max) {
+                  const conMod = Math.floor(((char.stats.con || 10) - 10) / 2);
+                  const heal = Math.max(2, Math.floor(Math.random() * 8) + 1 + conMod);
+                  const prev = char.hp.current;
+                  char.hp.current = Math.min(char.hp.max, char.hp.current + heal);
+                  const diff = char.hp.current - prev;
+                  if (diff > 0) audit.push(`[${shortName}: +${diff} HP]`);
+                }
+                if (Array.isArray(char.spellSlots) && char.spellSlots.length > 0) {
+                  const s1 = char.spellSlots.find(s => s.level === 1);
+                  if (s1 && s1.current < s1.max) {
+                    s1.current += 1;
+                    audit.push(`[${shortName}: +1 ячейка 1ур]`);
+                  }
+                }
+              });
+
+              campaign.chatHistory.push({
+                role: 'assistant',
+                content:
+                  '### ⛺ Короткий отдых завершён\n\nОтряд провёл час в относительной безопасности, перевязав раны и восстановив магическую концентрацию.',
+                stateDeltaSummary: audit.length ? audit.join(' ') : '[Короткий отдых: ресурсы в норме]'
+              });
+
+              saveCampaign();
+              renderHud();
+              renderChat(true);
+              closeAuxModal();
+              showToast('Короткий отдых завершён', 'success');
+            });
+          }
+        };
+
+        renderRestContent();
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+      }
+
+      // Модальное окно редактирования локации и заметок мира
+      function openWorldModal() {
+        const modal = document.getElementById('auxModal');
+        const title = document.getElementById('auxModalTitle');
+        const body = document.getElementById('auxModalBody');
+        if (!modal || !title || !body) return;
+
+        title.textContent = '🗺️ Локация и состояние мира';
+        body.innerHTML = `
+          <div class="space-y-3">
+            <div>
+              <label class="block text-zinc-400 mb-1">Название кампании</label>
+              <input id="worldCampaignName" type="text" value="${escapeHtml(campaign.campaignName)}" class="w-full bg-slate-950 text-zinc-100 rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-zinc-400 mb-1">Текущая локация</label>
+              <input id="worldLocationInput" type="text" value="${escapeHtml(campaign.world.location)}" class="w-full bg-slate-950 text-zinc-100 rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-zinc-400 mb-1">Время суток / Погода</label>
+              <input id="worldTimeInput" type="text" value="${escapeHtml(campaign.world.time)}" class="w-full bg-slate-950 text-zinc-100 rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+            </div>
+            <div>
+              <label class="block text-zinc-400 mb-1">Заметки мастера и важные детали</label>
+              <textarea id="worldNotesInput" rows="3" class="w-full bg-slate-950 text-zinc-100 rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none resize-none">${escapeHtml(campaign.world.notes)}</textarea>
+            </div>
+            <button type="button" id="btnSaveWorldModal" class="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs">
+              Сохранить мир
+            </button>
+          </div>
+        `;
+
+        const btnSave = document.getElementById('btnSaveWorldModal');
+        if (btnSave) {
+          btnSave.addEventListener('click', () => {
+            campaign.campaignName = document.getElementById('worldCampaignName').value.trim() || 'Кампания D&D';
+            campaign.world.location = document.getElementById('worldLocationInput').value.trim() || 'Неизвестная локация';
+            campaign.world.time = document.getElementById('worldTimeInput').value.trim() || 'День';
+            campaign.world.notes = document.getElementById('worldNotesInput').value.trim();
+            saveCampaign();
+            renderHud();
+            closeAuxModal();
+            showToast('Локация и заметки мира обновлены', 'success');
+          });
+        }
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+      }
+
+      function closeAuxModal() {
+        const modal = document.getElementById('auxModal');
+        if (modal) {
+          modal.classList.add('hidden');
+          modal.classList.remove('flex');
+        }
+      }
+
+      // ---------------------------------------------------------------------------
+      // 12. МОДАЛКА НАСТРОЕК, ЭКСПОРТ, ИМПОРТ И СБРОС ДЕМО
+      // ---------------------------------------------------------------------------
+      function openSettingsModal() {
+        const modal = document.getElementById('settingsModal');
+        if (!modal) return;
+
+        document.getElementById('inputApiUrl').value = credentials.apiUrl || '';
+        document.getElementById('inputApiKey').value = credentials.apiKey || '';
+        document.getElementById('inputApiModel').value = credentials.model || '';
+        document.getElementById('inputDemoMode').checked = Boolean(credentials.demoMode);
+
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+      }
+
+      function closeSettingsModal() {
+        const modal = document.getElementById('settingsModal');
+        if (modal) {
+          modal.classList.add('hidden');
+          modal.classList.remove('flex');
+        }
+      }
+
+      function exportCampaignJson() {
+        // Экспортируется ТОЛЬКО dnd_campaign. Поля API-ключей никогда туда не попадают.
+        const exportPayload = {
+          campaignName: campaign.campaignName,
+          world: deepClone(campaign.world),
+          party: deepClone(campaign.party),
+          chatHistory: deepClone(campaign.chatHistory)
+        };
+        const jsonString = JSON.stringify(exportPayload, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const safeName = (campaign.campaignName || 'dnd_campaign')
+          .toLowerCase()
+          .replace(/[^a-zа-яё0-9_-]+/gi, '_');
+        a.href = url;
+        a.download = `${safeName}.json`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showToast('Кампания экспортирована в JSON (без API-ключей)', 'success');
+      }
+
+      function importCampaignJson(file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const parsed = JSON.parse(String(reader.result || ''));
+            const validated = validateAndNormalizeCampaign(parsed);
+            if (!validated) {
+              showToast('Ошибка импорта: JSON должен содержать поля party и chatHistory', 'error');
+              return;
+            }
+            createSnapshot();
+            campaign = validated;
+            saveCampaign();
+            renderHud();
+            renderChat(true);
+            closeSettingsModal();
+            showToast(`Кампания «${campaign.campaignName}» успешно импортирована`, 'success');
+          } catch (err) {
+            showToast('Ошибка чтения JSON файла', 'error');
+          }
+        };
+        reader.readAsText(file, 'utf-8');
+      }
+
+      function resetToStarterPreset() {
+        createSnapshot();
+        campaign = deepClone(STARTER_DEMO_PRESET);
+        saveCampaign();
+        renderHud();
+        renderChat(true);
+        closeSettingsModal();
+        showToast('Загружен стартовый пресет: Лиора и Вэл в «Хромой Собаке»', 'success');
+      }
+
+      // ---------------------------------------------------------------------------
+      // 13. ИНИЦИАЛИЗАЦИЯ ВСЕХ ОБРАБОТЧИКОВ СОБЫТИЙ
+      // ---------------------------------------------------------------------------
+      function initEventListeners() {
+        // Кнопка редактирования мира
+        document.getElementById('btnEditWorld')?.addEventListener('click', openWorldModal);
+
+        // Кнопка индикатора API открывает настройки
+        document.getElementById('btnApiStatusBadge')?.addEventListener('click', openSettingsModal);
+
+        // Кнопка открытия настроек ⚙️
+        document.getElementById('btnOpenSettings')?.addEventListener('click', openSettingsModal);
+        document.getElementById('btnCloseSettings')?.addEventListener('click', closeSettingsModal);
+        document.getElementById('settingsBackdrop')?.addEventListener('click', closeSettingsModal);
+
+        // Пресеты API в настройках
+        document.querySelectorAll('.api-preset-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const preset = btn.getAttribute('data-preset');
+            const urlInp = document.getElementById('inputApiUrl');
+            const modelInp = document.getElementById('inputApiModel');
+            if (preset === 'openai') {
+              urlInp.value = 'https://api.openai.com/v1/chat/completions';
+              modelInp.value = 'gpt-4o-mini';
+            } else if (preset === 'openrouter') {
+              urlInp.value = 'https://openrouter.ai/api/v1/chat/completions';
+              modelInp.value = 'google/gemini-2.5-flash';
+            } else if (preset === 'deepseek') {
+              urlInp.value = 'https://api.deepseek.com/chat/completions';
+              modelInp.value = 'deepseek-chat';
+            } else if (preset === 'ollama') {
+              urlInp.value = 'http://localhost:11434/v1/chat/completions';
+              modelInp.value = 'llama3.1';
+              document.getElementById('inputDemoMode').checked = false;
+            }
+          });
+        });
+
+        // Автоматическое снятие галочки Демо-ГМа при вводе API-ключа
+        document.getElementById('inputApiKey')?.addEventListener('input', e => {
+          if (e.target.value.trim().length > 0) {
+            document.getElementById('inputDemoMode').checked = false;
+          }
+        });
+
+        // Сохранение настроек API (dnd_credentials)
+        document.getElementById('btnSaveCredentials')?.addEventListener('click', () => {
+          credentials.apiUrl = document.getElementById('inputApiUrl').value.trim() || DEFAULT_CREDENTIALS.apiUrl;
+          credentials.apiKey = document.getElementById('inputApiKey').value.trim();
+          credentials.model = document.getElementById('inputApiModel').value.trim() || DEFAULT_CREDENTIALS.model;
+          credentials.demoMode = Boolean(document.getElementById('inputDemoMode').checked);
+          saveCredentials();
+          closeSettingsModal();
+          showToast('Настройки подключения сохранены в dnd_credentials', 'success');
+        });
+
+        // Экспорт кампании
+        document.getElementById('btnExportCampaign')?.addEventListener('click', exportCampaignJson);
+
+        // Импорт кампании
+        const importInput = document.getElementById('inputImportFile');
+        if (importInput) {
+          importInput.addEventListener('change', () => {
+            if (importInput.files && importInput.files[0]) {
+              importCampaignJson(importInput.files[0]);
+              importInput.value = '';
+            }
+          });
+        }
+
+        // Сброс / Загрузка стартового демо-пресета
+        document.getElementById('btnResetDemoPreset')?.addEventListener('click', resetToStarterPreset);
+
+        // Тестовый JSON-апдейт от ГМа (из настроек)
+        document.getElementById('btnSimulateStructuredTurn')?.addEventListener('click', () => {
+          createSnapshot();
+          const sampleFenceJson =
+            '```json\n' +
+            JSON.stringify({
+              narrative:
+                '### Тень за окном «Хромой Собаки»\n\nВнезапно ставня распахивается от удара, и в зал влетает арбалетный болт, задевая плечо **Вэла**! **Лиора** мгновенно сотворяет защитный напев, тратя ячейку заклинаний 1-го круга, и перевязывает рану товарища бинтами. На подоконнике остаётся торчать **Ржавый ключ** с запиской.',
+              state_update: {
+                character_changes: [
+                  {
+                    name: 'Лиора Эстель',
+                    hp_delta: 0,
+                    spell_slots_spent: { '1': 1 },
+                    conditions_add: [],
+                    conditions_remove: []
+                  },
+                  {
+                    name: 'Вэл',
+                    hp_delta: -4,
+                    conditions_add: ['Настороже'],
+                    conditions_remove: []
+                  }
+                ],
+                inventory_add: [{ char_name: 'Вэл', item: 'Ржавый ключ', qty: 1 }],
+                inventory_remove: [{ char_name: 'Лиора Эстель', item: 'Сумка целителя', qty: 1 }],
+                currency_delta: { gp: 0, sp: -2, cp: 0 },
+                location_update: '«Хромая Собака», Зал'
+              }
+            }) +
+            '\n```';
+          processRawGmOutput(sampleFenceJson);
+          saveCampaign();
+          renderHud();
+          renderChat(true);
+          closeSettingsModal();
+          showToast('Тестовый JSON-ответ ГМа обработан', 'success');
+        });
+
+        document.getElementById('btnSimulateFallbackTurn')?.addEventListener('click', () => {
+          createSnapshot();
+          const brokenOutput = 'Трактирщик хмуро смотрит на вас из-под кустистых бровей: **«Если ищете неприятностей, загляните в старый склеп за холмом»**. (Модель ответила чистым текстом без JSON)';
+          processRawGmOutput(brokenOutput);
+          saveCampaign();
+          renderHud();
+          renderChat(true);
+          closeSettingsModal();
+        });
+
+        // Добавление нового персонажа «+ Герой»
+        document.getElementById('btnAddCharacter')?.addEventListener('click', () => {
+          const newId = 'char_' + Date.now();
+          const newChar = normalizeCharacter(
+            {
+              id: newId,
+              name: `Герой #${campaign.party.length + 1}`,
+              class: 'Плут / Искатель (1 ур)',
+              hp: { current: 14, max: 14 },
+              ac: 14,
+              stats: { str: 10, dex: 16, con: 12, int: 12, wis: 10, cha: 14 },
+              spellSlots: [],
+              conditions: [],
+              currency: { gp: 5, sp: 0, cp: 0 },
+              inventory: [{ name: 'Короткий меч', qty: 1 }]
+            },
+            campaign.party.length
+          );
+          campaign.party.push(newChar);
+          saveCampaign();
+          renderHud();
+          openCharacterSheet(newId);
+          showToast('Добавлен новый персонаж', 'success');
+        });
+
+        // Закрытие и удаление персонажа в Bottom Sheet
+        document.getElementById('btnCloseCharSheet')?.addEventListener('click', closeCharacterSheet);
+        document.getElementById('charSheetBackdrop')?.addEventListener('click', closeCharacterSheet);
+        document.getElementById('btnDeleteCharacter')?.addEventListener('click', () => {
+          if (!activeEditingCharId) return;
+          const idx = campaign.party.findIndex(c => c.id === activeEditingCharId);
+          if (idx !== -1) {
+            const removed = campaign.party.splice(idx, 1)[0];
+            saveCampaign();
+            renderHud();
+            closeCharacterSheet();
+            showToast(`Персонаж «${removed.name}» удалён из отряда`, 'info');
+          }
+        });
+
+        // Вспомогательная модалка
+        document.getElementById('btnCloseAuxModal')?.addEventListener('click', closeAuxModal);
+        document.getElementById('auxBackdrop')?.addEventListener('click', closeAuxModal);
+
+        // Кнопка d20 (генерирует случайное 1–20 и вставляет «[Бросок d20: X]» в поле ввода)
+        document.getElementById('btnRollD20')?.addEventListener('click', () => {
+          const roll = Math.floor(Math.random() * 20) + 1;
+          insertTextIntoChat(`[Бросок d20: ${roll}]`);
+          const flavor = roll === 20 ? ' 🔥 КРИТИЧЕСКИЙ УСПЕХ!' : roll === 1 ? ' 💀 КРИТИЧЕСКИЙПРОВАЛ!' : '';
+          showToast(`🎲 Бросок d20: выпало ${roll}${flavor}`, roll === 20 ? 'success' : roll === 1 ? 'error' : 'info');
+        });
+
+        // Дополнительный трей кубиков
+        document.getElementById('btnOpenDiceTray')?.addEventListener('click', () => {
+          const tray = document.getElementById('diceTrayBar');
+          if (tray) {
+            tray.classList.toggle('hidden');
+            tray.classList.toggle('flex');
+          }
+        });
+
+        document.querySelectorAll('.dice-quick-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const sides = parseInt(btn.getAttribute('data-dice'), 10) || 6;
+            const roll = Math.floor(Math.random() * sides) + 1;
+            insertTextIntoChat(`[Бросок d${sides}: ${roll}]`);
+            showToast(`🎲 Бросок d${sides}: выпало ${roll}`, 'info');
+          });
+        });
+
+        // Кнопка «Короткий отдых»
+        document.getElementById('btnShortRest')?.addEventListener('click', openShortRestModal);
+
+        // Кнопка «Откат хода» (Undo)
+        document.getElementById('btnUndoTurn')?.addEventListener('click', handleUndoTurn);
+
+        // Поле ввода и отправка сообщения
+        const chatInput = document.getElementById('chatInput');
+        const chatForm = document.getElementById('chatForm');
+
+        if (chatInput) {
+          chatInput.addEventListener('input', () => autoResizeTextarea(chatInput));
+          chatInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (!isGenerating && chatInput.value.trim()) {
+                handleSendTurn(chatInput.value);
+              }
+            }
+          });
+        }
+
+        if (chatForm) {
+          chatForm.addEventListener('submit', e => {
+            e.preventDefault();
+            if (chatInput && !isGenerating && chatInput.value.trim()) {
+              handleSendTurn(chatInput.value);
+            }
+          });
+        }
+      }
+
+// Старт приложения
+      renderHud();
+      renderChat(true);
+      updateUndoButtonState();
+      initEventListeners();
+
+// Синхронизация с сервером
+      (async function syncWithServer() {
+        try {
+          const res = await fetch(`/api/campaign?id=${encodeURIComponent(CAMPAIGN_ID)}`, {
+            cache: 'no-store'
+          });
+
+          if (res.ok) {
+            const serverRaw = await res.json();
+            const serverData = validateAndNormalizeCampaign(serverRaw);
+            if (serverData) {
+              const localRaw = safeGetStorage(STORAGE_KEYS.CAMPAIGN);
+              let localData = null;
+              try {
+                if (localRaw) localData = validateAndNormalizeCampaign(JSON.parse(localRaw));
+              } catch (_) {}
+
+              const localTurns = localData?.chatHistory?.length || 0;
+              const serverTurns = serverData?.chatHistory?.length || 0;
+
+              // Телефон перезаписывает сервер только если на нём реально играли офлайн (больше ходов в чате)
+              if (localData && localTurns > serverTurns) {
+                console.log(`[SYNC] На телефоне есть офлайн-ходы (${localTurns} > ${serverTurns}), пушим на сервер`);
+                saveCampaign();
+                return;
+              }
+
+              // В остальных случаях сервер — главный источник правды
+              campaign = serverData;
+              safeSetStorage(STORAGE_KEYS.CAMPAIGN, JSON.stringify(campaign));
+              renderHud();
+              renderChat(true);
+              console.log(`[SYNC] Кампания "${CAMPAIGN_ID}" загружена с сервера`);
+            }
+          } else if (res.status === 404) {
+            // Новая кампания — сразу фиксируем файл на сервере
+            console.log(`[SYNC] Новая кампания "${CAMPAIGN_ID}", создаём файл на сервере`);
+            saveCampaign();
+          }
+        } catch (e) {
+          console.log('[SYNC] Автономный режим');
+        }
+      })();
+    })();
+  </script>
+</body>
+</html>
