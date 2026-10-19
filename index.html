@@ -657,15 +657,21 @@ const STORAGE_KEYS = {
         renderApiStatusBadge();
       }
 
-      function normalizeCharacter(char, idx) {
+function normalizeCharacter(char, idx) {
         const hpMax = Math.max(1, parseInt(char?.hp?.max, 10) || 10);
         const hpCur = Math.min(hpMax, Math.max(0, parseInt(char?.hp?.current, 10) ?? hpMax));
         return {
           id: char?.id || 'char_' + Date.now() + '_' + idx,
           name: String(char?.name || 'Безымянный герой').trim(),
           class: String(char?.class || 'Искатель приключений (1 ур)').trim(),
-		  shortBio: String(char?.shortBio || '').trim(), // <-- Улетает мастеру
-		  fullBio: String(char?.fullBio || '').trim(),   // <-- Только для тебя
+          shortBio: String(char?.shortBio || '').trim(),
+          fullBio: String(char?.fullBio || '').trim(),
+          spells: Array.isArray(char?.spells)
+            ? char.spells.map(s => typeof s === 'string' ? { name: s, desc: '' } : { name: String(s?.name || '').trim(), desc: String(s?.desc || '').trim() }).filter(s => s.name)
+            : [],
+          features: Array.isArray(char?.features)
+            ? char.features.map(f => typeof f === 'string' ? { name: f, desc: '' } : { name: String(f?.name || '').trim(), desc: String(f?.desc || '').trim() }).filter(f => f.name)
+            : [],
           hp: { current: hpCur, max: hpMax },
           ac: parseInt(char?.ac, 10) || 12,
           stats: {
@@ -1264,7 +1270,7 @@ function handleRerollLastTurn() {
         }
       }
 
-      function renderCharacterSheetBody(char) {
+function renderCharacterSheetBody(char) {
         const body = document.getElementById('charSheetBody');
         if (!body) return;
 
@@ -1351,39 +1357,71 @@ function handleRerollLastTurn() {
                 })
                 .join('');
 
+        // Заклинания (Spells)
+        const spellsHtml =
+          (!char.spells || char.spells.length === 0)
+            ? `<div class="text-xs text-zinc-500 italic">Заклинания не записаны</div>`
+            : char.spells
+                .map((sp, idx) => `
+                  <div class="flex items-start justify-between gap-2 bg-slate-950 border border-zinc-800 rounded-xl p-2.5">
+                    <div class="flex-1 min-w-0">
+                      <div class="text-xs font-bold text-amber-300 truncate">${escapeHtml(sp.name)}</div>${sp.desc ? `<div class="text-[11px] text-zinc-400 mt-0.5 leading-snug break-words">${escapeHtml(sp.desc)}</div>` : ''}
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0 mt-0.5">
+                      <button type="button" data-cast-spell="${idx}" class="px-2 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 text-xs font-semibold" title="Вставить применение заклинания в чат">
+                        🎲 Каст
+                      </button>
+                      <button type="button" data-del-spell="${idx}" class="w-6 h-6 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-bold">
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                `).join('');
+
+        // Умения и черты (Features)
+        const featuresHtml =
+          (!char.features || char.features.length === 0)
+            ? `<div class="text-xs text-zinc-500 italic">Классовые умения не записаны</div>`
+            : char.features
+                .map((ft, idx) => `
+                  <div class="flex items-start justify-between gap-2 bg-slate-950 border border-zinc-800 rounded-xl p-2.5">
+                    <div class="flex-1 min-w-0">
+                      <div class="text-xs font-bold text-emerald-400 truncate">${escapeHtml(ft.name)}</div>${ft.desc ? `<div class="text-[11px] text-zinc-400 mt-0.5 leading-snug break-words">${escapeHtml(ft.desc)}</div>` : ''}
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0 mt-0.5">
+                      <button type="button" data-use-feat="${idx}" class="px-2 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-semibold" title="Вставить применение умения в чат">
+                        ⚡ Использовать
+                      </button>
+                      <button type="button" data-del-feat="${idx}" class="w-6 h-6 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-bold">
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                `).join('');
+
         // Состояния (Conditions)
         const activeConditionsHtml =
           char.conditions.length === 0
             ? `<span class="text-xs text-zinc-500 italic">Нет активных состояний</span>`
             : char.conditions
-                .map(
-                  (c, cIdx) => `
+                .map((c, cIdx) => `
                   <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-medium">
                     <span>${escapeHtml(c)}</span>
                     <button type="button" data-remove-cond="${cIdx}" class="text-amber-200 hover:text-white font-bold ml-0.5">✕</button>
                   </span>
-                `
-                )
-                .join('');
+                `).join('');
 
         const presetCondButtons = DND_CONDITIONS_PRESETS.filter(p => !char.conditions.includes(p))
-          .map(
-            p =>
-              `<button type="button" data-add-preset-cond="${escapeHtml(
-                p
-              )}" class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 text-[11px]">+ ${escapeHtml(
-                p
-              )}</button>`
-          )
-          .join('');
+          .map(p => `
+            <button type="button" data-add-preset-cond="${escapeHtml(p)}" class="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 text-[11px]">+ ${escapeHtml(p)}</button>
+          `).join('');
 
         // Инвентарь
         const inventoryHtml =
           char.inventory.length === 0
             ? `<div class="text-xs text-zinc-500 italic">Рюкзак пуст</div>`
             : char.inventory
-                .map(
-                  (item, idx) => `
+                .map((item, idx) => `
                   <div class="flex items-center justify-between gap-2 bg-slate-950 border border-zinc-800 rounded-xl px-3 py-2">
                     <input
                       type="text"
@@ -1398,9 +1436,7 @@ function handleRerollLastTurn() {
                       <button type="button" data-inv-del="${idx}" class="w-6 h-6 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-bold ml-1">✕</button>
                     </div>
                   </div>
-                `
-                )
-                .join('');
+                `).join('');
 
         body.innerHTML = `
           <!-- Имя, Класс и КД -->
@@ -1410,7 +1446,12 @@ function handleRerollLastTurn() {
               <input id="sheetCharName" type="text" value="${escapeHtml(char.name)}" class="w-full bg-slate-950 text-zinc-100 text-xs font-semibold rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
             </div>
             <div>
-              <label class="block text-[11px] text-zinc-400 mb-1">Раса / Класс и уровень</label>
+              <div class="flex items-center justify-between mb-1">
+                <label class="block text-[11px] text-zinc-400">Раса / Класс и ур.</label>
+                <button type="button" id="btnAutoGenerateClassSkills" class="text-[10px] text-amber-400 hover:text-amber-300 font-semibold flex items-center gap-0.5">
+                  <span>✨ Заполнить по классу</span>
+                </button>
+              </div>
               <input id="sheetCharClass" type="text" value="${escapeHtml(char.class)}" class="w-full bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none">
             </div>
             <div>
@@ -1419,11 +1460,11 @@ function handleRerollLastTurn() {
             </div>
           </div>
 		  
-		  <!-- Суть для ГМа -->
+          <!-- Суть для ГМа -->
           <div>
             <div class="flex items-center justify-between mb-1">
               <label class="text-[11px] font-bold text-amber-400">Суть для Мастера (улетает в контекст)</label>
-              <span class="text-[10px] text-zinc-500">Характер, манеры, 1-2 предложения</span>
+              <span class="text-[10px] text-zinc-500">Характер, привычки, манеры</span>
             </div>
             <textarea
               id="sheetCharShortBio"
@@ -1441,7 +1482,7 @@ function handleRerollLastTurn() {
             </div>
             <textarea
               id="sheetCharFullBio"
-              rows="10"
+              rows="3"
               placeholder="Предыстория с рождения, заметки, тайны, контакты..."
               class="w-full bg-slate-950 text-zinc-100 placeholder-zinc-600 text-xs rounded-xl px-3 py-2 border border-zinc-700 focus:border-amber-500 focus:outline-none resize-none thin-scrollbar leading-relaxed"
             >${escapeHtml(char.fullBio || '')}</textarea>
@@ -1485,6 +1526,34 @@ function handleRerollLastTurn() {
             </div>
             <div class="space-y-1.5">
               ${slotsListHtml}
+            </div>
+          </div>
+
+          <!-- Заклинания (Spells) -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-amber-400">📖 Книга заклинаний</span>
+              <span class="text-[10px] text-zinc-400">Тап по 🎲 вставляет каст в чат</span>
+            </div>
+            <div class="space-y-1.5">${spellsHtml}</div>
+            <div class="flex flex-col sm:flex-row gap-1.5 pt-1">
+              <input id="inputNewSpellName" type="text" placeholder="Название заклинания..." class="flex-1 bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-1.5 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+              <input id="inputNewSpellDesc" type="text" placeholder="Эффект (напр. 1d8 урона, 60 фт)" class="flex-1 bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-1.5 border border-zinc-700 focus:border-amber-500 focus:outline-none">
+              <button type="button" id="btnAddSpellItem" class="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0">+ Спелл</button>
+            </div>
+          </div>
+
+          <!-- Умения и особенности (Features) -->
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-emerald-400">⚡ Классовые умения и черты</span>
+              <span class="text-[10px] text-zinc-400">Тап по ⚡ вставляет умение в чат</span>
+            </div>
+            <div class="space-y-1.5">${featuresHtml}</div>
+            <div class="flex flex-col sm:flex-row gap-1.5 pt-1">
+              <input id="inputNewFeatName" type="text" placeholder="Название умения..." class="flex-1 bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-1.5 border border-zinc-700 focus:border-emerald-500 focus:outline-none">
+              <input id="inputNewFeatDesc" type="text" placeholder="Эффект (напр. 1d10+2 HP раз за отдых)" class="flex-1 bg-slate-950 text-zinc-100 text-xs rounded-xl px-3 py-1.5 border border-zinc-700 focus:border-emerald-500 focus:outline-none">
+              <button type="button" id="btnAddFeatItem" class="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs shrink-0">+ Умение</button>
             </div>
           </div>
 
@@ -1819,6 +1888,169 @@ function handleRerollLastTurn() {
             }
           });
         }
+		
+		// Заклинания: быстрый каст
+        body.querySelectorAll('[data-cast-spell]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-cast-spell'), 10);
+            const sp = char.spells[idx];
+            if (sp) {
+              insertTextIntoChat(`[${char.name} кастует: ${sp.name}${sp.desc ? ' (' + sp.desc + ')' : ''}]`);
+              closeCharacterSheet();
+              showToast(`Готово к применению: ${sp.name}`, 'info');
+            }
+          });
+        });
+
+        // Заклинания: удаление
+        body.querySelectorAll('[data-del-spell]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-del-spell'), 10);
+            char.spells.splice(idx, 1);
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        // Заклинания: ручное добавление
+        const btnAddSpell = document.getElementById('btnAddSpellItem');
+        const inpSpellName = document.getElementById('inputNewSpellName');
+        const inpSpellDesc = document.getElementById('inputNewSpellDesc');
+        if (btnAddSpell && inpSpellName && inpSpellDesc) {
+          const addSpellFn = () => {
+            const name = inpSpellName.value.trim();
+            const desc = inpSpellDesc.value.trim();
+            if (!name) return;
+            char.spells.push({ name, desc });
+            syncAndRefreshSheet(char, true);
+          };
+          btnAddSpell.addEventListener('click', addSpellFn);
+        }
+
+        // Умения: быстрое применение
+        body.querySelectorAll('[data-use-feat]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-use-feat'), 10);
+            const ft = char.features[idx];
+            if (ft) {
+              insertTextIntoChat(`[${char.name} применяет умение: ${ft.name}${ft.desc ? ' (' + ft.desc + ')' : ''}]`);
+              closeCharacterSheet();
+              showToast(`Умение: ${ft.name}`, 'info');
+            }
+          });
+        });
+
+        // Умения: удаление
+        body.querySelectorAll('[data-del-feat]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-del-feat'), 10);
+            char.features.splice(idx, 1);
+            syncAndRefreshSheet(char, true);
+          });
+        });
+
+        // Умения: ручное добавление
+        const btnAddFeat = document.getElementById('btnAddFeatItem');
+        const inpFeatName = document.getElementById('inputNewFeatName');
+        const inpFeatDesc = document.getElementById('inputNewFeatDesc');
+        if (btnAddFeat && inpFeatName && inpFeatDesc) {
+          const addFeatFn = () => {
+            const name = inpFeatName.value.trim();
+            const desc = inpFeatDesc.value.trim();
+            if (!name) return;
+            char.features.push({ name, desc });
+            syncAndRefreshSheet(char, true);
+          };
+          btnAddFeat.addEventListener('click', addFeatFn);
+        }
+
+        // КНОПКА: ✨ Заполнить по классу (запрос к ИИ)
+        const btnAutoFill = document.getElementById('btnAutoGenerateClassSkills');
+        if (btnAutoFill) {
+          btnAutoFill.addEventListener('click', async () => {
+            const cls = (char.class || '').trim();
+            if (!cls) {
+              showToast('Сначала укажите класс и уровень персонажа', 'warning');
+              return;
+            }
+
+            btnAutoFill.disabled = true;
+            btnAutoFill.innerHTML = `<span class="animate-spin text-amber-400">⏳</span> <span>Подбираем...</span>`;
+
+            try {
+              if (credentials.demoMode) {
+                // Пресет для демо-режима
+                if (cls.toLowerCase().includes('жрец') || cls.toLowerCase().includes('эльф')) {
+                  char.spells = [
+                    { name: 'Священное пламя', desc: 'Фокус, 1d8 излучением, спасбросок ЛОВ' },
+                    { name: 'Слово исцеления', desc: '1 круг, бонусное действие, 1d4+3 HP (дистанция 60 фт)' },
+                    { name: 'Щит веры', desc: '1 круг, +2 к КД (концентрация)' },
+                    { name: 'Благословение', desc: '1 круг, +1d4 к атакам и спасброскам' }
+                  ];
+                  char.features = [
+                    { name: 'Божественный канал: Сохранение жизни', desc: 'Хил по площади раненым сопартийцам' },
+                    { name: 'Ученик жизни', desc: 'Заклинания лечения восстанавливают на 2+круг HP больше' }
+                  ];
+                } else {
+                  char.spells = [];
+                  char.features = [
+                    { name: 'Второе дыхание', desc: 'Бонусным действием восстанавливает 1d10+2 HP (раз за отдых)' },
+                    { name: 'Всплеск действий', desc: 'Одно дополнительное действие в свой ход (раз за отдых)' },
+                    { name: 'Стрелковый стиль', desc: '+2 к броскам атаки дальнобойным оружием' }
+                  ];
+                }
+              } else {
+                const headers = { 'Content-Type': 'application/json' };
+                if (credentials.apiKey && credentials.apiKey.trim()) {
+                  headers['Authorization'] = `Bearer ${credentials.apiKey.trim()}`;
+                }
+
+                const prompt = `Ты — справочник правил D&D 5e. Для персонажа: "${cls}" сформируй стартовый набор наиболее полезных способностей.
+Верни СТРОГО один валидный JSON-объект без markdown \`\`\`json:
+{
+  "spells": [
+    {"name": "Название спелла", "desc": "Круг, дистанция и краткий эффект (урон/хил)"}
+  ],
+  "features": [
+    {"name": "Название классового умения/черты", "desc": "Краткий эффект и частота использования"}
+  ]
+}
+Если класс не магия (воин, плут и т.д.), массив "spells" оставь пустым []. Дай 3-5 ключевых заклинаний и 2-4 умения.`;
+
+                const res = await fetch(credentials.apiUrl, {
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify({
+                    model: credentials.model || 'deepseek-chat',
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0.2
+                  })
+                });
+
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                let rawText = data?.choices?.[0]?.message?.content || '';
+                rawText = rawText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+                const fenced = rawText.match(/```(?:json)?\s*([\s\S]*?)```/i);
+                if (fenced && fenced[1]) rawText = fenced[1].trim();
+                const b1 = rawText.indexOf('{');
+                const b2 = rawText.lastIndexOf('}');
+                if (b1 !== -1 && b2 > b1) rawText = rawText.slice(b1, b2 + 1);
+
+                const parsed = JSON.parse(rawText);
+                if (Array.isArray(parsed.spells)) char.spells = parsed.spells;
+                if (Array.isArray(parsed.features)) char.features = parsed.features;
+              }
+
+              syncAndRefreshSheet(char, true);
+              showToast(`Способности для ${char.name} подобраны!`, 'success');
+            } catch (err) {
+              showToast('Не удалось подобрать способности через API', 'error');
+              syncAndRefreshSheet(char, true);
+            }
+          });
+        }
+		
       }
 
 // ---------------------------------------------------------------------------
@@ -2191,7 +2423,11 @@ const GM_PROMPT_PLAIN = `
         if (loadingEl) loadingEl.classList.remove('hidden');
 
         try {
-          const partyForLlm = campaign.party.map(({ fullBio, ...rest }) => rest);
+const partyForLlm = campaign.party.map(({ fullBio, ...rest }) => ({
+            ...rest,
+            spells: (rest.spells || []).map(s => s.name + (s.desc ? ` (${s.desc})` : '')),
+            features: (rest.features || []).map(f => f.name + (f.desc ? ` (${f.desc})` : ''))
+          }));
           const compactStateJson = JSON.stringify({
             campaignName: campaign.campaignName,
             world: campaign.world,
