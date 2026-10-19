@@ -272,7 +272,7 @@
       <form id="chatForm" class="flex items-end gap-2">
         <textarea
           id="chatInput"
-          rows="1"
+          rows="10"
           placeholder="Опишите действие героев..."
           class="flex-1 bg-slate-950 text-zinc-100 placeholder-zinc-500 text-sm rounded-xl px-3.5 py-2.5 border border-zinc-700/90 focus:border-amber-500 focus:outline-none resize-none leading-5 max-h-[4.5rem] overflow-y-auto thin-scrollbar"
         ></textarea>
@@ -534,8 +534,18 @@ const STORAGE_KEYS = {
         ]
       };
 
-      const SYSTEM_PROMPT = `Ты — опытный Мастер Подземелий (Dungeon Master) для настольной ролевой игры D&D 5-й редакции.
-Веди увлекательную, атмосферную игру на русском языке.
+      const SYSTEM_PROMPT = `
+Ты выступаешь в роли Мастера (Dungeon Master) в текстовой ролевой игре по сеттингу Забытых Королевств (Forgotten Realms, D&D 5e). 
+
+ЖАНР И ТОН:
+Приземлённое дорожное приключение (road-movie), атмосфера пыльных трактов, наёмничьих будней и локальных передряг. Низкий эпический масштаб: никаких спасений вселенной, древних пророчеств и божественного вмешательства на старте. Мир опасен, грязен, материален, но не лишён мелких странностей и дорожного уюта.
+
+ЖЁСТКИЕ ПРАВИЛА ВЕДЕНИЯ:
+1. Запрет на кукловодство (Godmoding): Никогда не решай, не описывай и не дописывай действия, слова, эмоции, мысли или решения персонажей игроков. Твоя зона контроля — окружение, погода, NPC, последствия бросков и физика мира.
+2. Фокус на интерактив: Описания лаконичные, ёмкие, без простыней литературного текста на пять экранов. Давай 2–3 абзаца экспозиции или реакции мира, после чего передавай инициативу игрокам.
+3. Сложность и честность: Мир не подстраивается под персонажей. Если они делают глупость — наступают закономерные последствия. 
+4. Ты НИКОГДА не отыгрываешь за персонажей участников, не описываешь их мысли и не описываешь их действия. Описываешь только реакцию мира на их действия.
+
 Учитывай текущее состояние партии (party) и мира (world), переданное в контексте.
 Всегда соблюдай баланс D&D 5e: запрашивай проверки характеристик (d20), учитывай КД (AC), трать ячейки заклинаний при касте, изменяй HP при уроне или лечении, обновляй инвентарь и монеты.
 
@@ -1751,9 +1761,13 @@ if (copyBtn) {
         }
       }
 
+// ---------------------------------------------------------------------------
+      // 8. ПАРСЕР ОТВЕТА LLM И ПРИМЕНЕНИЕ STATE_UPDATE (ДВУХЭТАПНЫЙ ПАЙПЛАЙН)
       // ---------------------------------------------------------------------------
-      // 8. ПАРСЕР ОТВЕТА LLM И ПРИМЕНЕНИЕ STATE_UPDATE (Раздел 4 ТЗ)
-      // ---------------------------------------------------------------------------
+      if (!STORAGE_KEYS.SNAPSHOT) {
+        STORAGE_KEYS.SNAPSHOT = `dnd_snapshot_${CAMPAIGN_ID}`;
+      }
+
       function findCharacterBySubstring(queryName) {
         if (!queryName || typeof queryName !== 'string') return null;
         const q = queryName.trim().toLowerCase();
@@ -1763,73 +1777,82 @@ if (copyBtn) {
         );
       }
 
+      function parseAuditorJson(rawText) {
+        if (!rawText || typeof rawText !== 'string') return null;
+        let cleaned = rawText.trim();
+        const fenced = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenced && fenced[1]) cleaned = fenced[1].trim();
+        const firstBrace = cleaned.indexOf('{');
+        const lastBrace = cleaned.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+        }
+        try {
+          const obj = JSON.parse(cleaned);
+          if (!obj || typeof obj !== 'object') return null;
+          if (obj.state_update && typeof obj.state_update === 'object') {
+            return obj.state_update;
+          }
+          if (obj.character_changes || obj.inventory_add || obj.inventory_remove || obj.currency_delta || obj.location_update !== undefined) {
+            return obj;
+          }
+        } catch (e) {
+          return null;
+        }
+        return null;
+      }
+
       function parseLlmStructuredResponse(rawText) {
         if (typeof rawText !== 'string' || !rawText.trim()) {
-          return {
-            ok: false,
-            narrative: '*(Пустой ответ от модели)*',
-            state_update: null
-          };
+          return { ok: false, narrative: '*(Пустой ответ от модели)*', state_update: null };
         }
-
         let cleaned = rawText.trim();
-
-        // 1. Очистка от обёртки ```json ... ``` или ``` ... ```
         const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
         if (fencedMatch && fencedMatch[1]) {
           cleaned = fencedMatch[1].trim();
         } else {
-          // Если вокруг JSON есть лишний текст, пробуем вырезать от первой { до последней }
           const firstBrace = cleaned.indexOf('{');
           const lastBrace = cleaned.lastIndexOf('}');
           if (firstBrace !== -1 && lastBrace > firstBrace) {
             cleaned = cleaned.slice(firstBrace, lastBrace + 1);
           }
         }
-
         try {
           const parsed = JSON.parse(cleaned);
-          if (parsed && typeof parsed === 'object' && typeof parsed.narrative === 'string') {
-            return {
-              ok: true,
-              narrative: parsed.narrative,
-              state_update: parsed.state_update && typeof parsed.state_update === 'object' ? parsed.state_update : null
-            };
+          if (parsed && typeof parsed === 'object') {
+            if (typeof parsed.narrative === 'string') {
+              return {
+                ok: true,
+                narrative: parsed.narrative,
+                state_update: parsed.state_update && typeof parsed.state_update === 'object' ? parsed.state_update : null
+              };
+            }
+            if (parsed.character_changes || parsed.inventory_add || parsed.location_update !== undefined) {
+              return { ok: true, narrative: '', state_update: parsed };
+            }
           }
-        } catch (err) {
-          // JSON повреждён или модель ответила чистым текстом
-        }
-
-        return {
-          ok: false,
-          narrative: rawText.trim(),
-          state_update: null
-        };
+        } catch (err) {}
+        return { ok: false, narrative: rawText.trim(), state_update: null };
       }
 
       function applyStateUpdate(stateUpdate) {
         if (!stateUpdate || typeof stateUpdate !== 'object') return [];
         const auditBadges = [];
 
-        // 1. Изменения персонажей (character_changes)
+        // 1. Изменения персонажей
         if (Array.isArray(stateUpdate.character_changes)) {
           stateUpdate.character_changes.forEach(change => {
             const char = findCharacterBySubstring(change?.name);
             if (!char) return;
             const shortName = char.name.split(' ')[0];
 
-            // HP delta
             const hpDelta = parseInt(change.hp_delta, 10) || 0;
             if (hpDelta !== 0) {
-              const prevHp = char.hp.current;
               char.hp.current = Math.max(0, Math.min(char.hp.max, char.hp.current + hpDelta));
-              const actualDelta = char.hp.current - prevHp;
               const sign = hpDelta > 0 ? `+${hpDelta}` : `${hpDelta}`;
-              auditBadges.push(`[${shortName}: ${sign} HP]`);
-              void actualDelta;
+              auditBadges.push(`[${shortName}:${sign} HP]`);
             }
 
-            // Потраченные ячейки заклинаний: spell_slots_spent: { "1": 1 }
             if (change.spell_slots_spent && typeof change.spell_slots_spent === 'object') {
               Object.entries(change.spell_slots_spent).forEach(([lvlKey, countVal]) => {
                 const lvl = parseInt(lvlKey, 10);
@@ -1849,7 +1872,6 @@ if (copyBtn) {
               });
             }
 
-            // Добавление состояний (conditions_add)
             if (Array.isArray(change.conditions_add)) {
               change.conditions_add.forEach(cond => {
                 const cStr = String(cond || '').trim();
@@ -1860,7 +1882,6 @@ if (copyBtn) {
               });
             }
 
-            // Снятие состояний (conditions_remove)
             if (Array.isArray(change.conditions_remove)) {
               change.conditions_remove.forEach(cond => {
                 const cStr = String(cond || '').trim().toLowerCase();
@@ -1874,7 +1895,7 @@ if (copyBtn) {
           });
         }
 
-        // 2. Добавление предметов (inventory_add)
+        // 2. Добавление предметов
         if (Array.isArray(stateUpdate.inventory_add)) {
           stateUpdate.inventory_add.forEach(entry => {
             const char = findCharacterBySubstring(entry?.char_name) || campaign.party[0];
@@ -1893,7 +1914,7 @@ if (copyBtn) {
           });
         }
 
-        // 3. Удаление предметов (inventory_remove)
+        // 3. Удаление предметов
         if (Array.isArray(stateUpdate.inventory_remove)) {
           stateUpdate.inventory_remove.forEach(entry => {
             const char = findCharacterBySubstring(entry?.char_name);
@@ -1914,7 +1935,7 @@ if (copyBtn) {
           });
         }
 
-        // 4. Изменение монет (currency_delta)
+        // 4. Монеты
         if (stateUpdate.currency_delta && typeof stateUpdate.currency_delta === 'object' && campaign.party.length > 0) {
           const targetChar = campaign.party[0];
           ['gp', 'sp', 'cp'].forEach(coin => {
@@ -1922,12 +1943,12 @@ if (copyBtn) {
             if (delta !== 0) {
               targetChar.currency[coin] = Math.max(0, (targetChar.currency[coin] || 0) + delta);
               const sign = delta > 0 ? `+${delta}` : `${delta}`;
-              auditBadges.push(`[Монеты: ${sign} ${coin}]`);
+              auditBadges.push(`[Монеты: ${sign}${coin}]`);
             }
           });
         }
 
-        // 5. Обновление локации (location_update)
+        // 5. Локация
         if (typeof stateUpdate.location_update === 'string' && stateUpdate.location_update.trim()) {
           const newLoc = stateUpdate.location_update.trim();
           if (newLoc !== campaign.world.location) {
@@ -1940,7 +1961,7 @@ if (copyBtn) {
       }
 
       // ---------------------------------------------------------------------------
-      // 9. АВТОНОМНЫЙ СИМУЛЯТОР ОТВЕТА ГМа (ДЛЯ ДЕМО-РЕЖИМА БЕЗ КЛЮЧА)
+      // 9. АВТОНОМНЫЙ СИМУЛЯТОР ДЕМО-ГМа
       // ---------------------------------------------------------------------------
       function buildDemoGmResponse(userText) {
         const lower = userText.toLowerCase();
@@ -1951,7 +1972,7 @@ if (copyBtn) {
         const vel = findCharacterBySubstring('Вэл') || campaign.party[1] || campaign.party[0];
 
         if (lower.includes('леч') || lower.includes('исцел') || lower.includes('молитв') || lower.includes('заклинан')) {
-          return JSON.stringify({
+          return {
             narrative:
               '### Свет Исцеления\n\n**Лиора Эстель** возносит тихую молитву и касается ладонью плеча спутника. Тёплое янтарное сияние окутывает раны, затягивая порезы и возвращая бодрость.\n\n> За соседним столом незнакомец в плаще с уважением склоняет голову, заметив божественный дар эльфийки.',
             state_update: {
@@ -1975,13 +1996,13 @@ if (copyBtn) {
               currency_delta: { gp: 0, sp: 0, cp: 0 },
               location_update: ''
             }
-          });
+          };
         }
 
         if (lower.includes('атак') || lower.includes('меч') || lower.includes('удар') || lower.includes('бой')) {
           const hitSuccess = rollVal === null || rollVal >= 11;
           if (hitSuccess) {
-            return JSON.stringify({
+            return {
               narrative: `### Схватка в полумраке\n\n${
                 rollVal ? `С броском **${rollVal}** ` : ''
               }**Вэл** молниеносно перехватывает рукоять полуторного меча и обрушивает удар на наёмника, опрокидывая дубовый стол! Враг отступает к дверям, роняя на пол старый ключ, но успевает полоснуть кинжалом в ответ.`,
@@ -1999,9 +2020,9 @@ if (copyBtn) {
                 currency_delta: { gp: 0, sp: 0, cp: 0 },
                 location_update: '«Хромая Собака», Главный зал'
               }
-            });
+            };
           } else {
-            return JSON.stringify({
+            return {
               narrative: `### Опасный промах\n\nБросок **${rollVal}** оказывается недостаточным — клинок скользит по сырым половицам, и противник контратакует эфесом! **Вэл** получает чувствительный удар в плечо.`,
               state_update: {
                 character_changes: [
@@ -2017,12 +2038,11 @@ if (copyBtn) {
                 currency_delta: { gp: 0, sp: 0, cp: 0 },
                 location_update: ''
               }
-            });
+            };
           }
         }
 
-        // Стандартный сюжетный ответ с интерактивным развитием сцены
-        return JSON.stringify({
+        return {
           narrative:
             `### Разговор у камина\n\n${
               rollVal ? `*(Учтён результат броска: **${rollVal}**)*\n\n` : ''
@@ -2044,19 +2064,51 @@ if (copyBtn) {
             currency_delta: { gp: 0, sp: -2, cp: 0 },
             location_update: '«Хромая Собака», Угол у камина'
           }
-        });
+        };
       }
 
       // ---------------------------------------------------------------------------
-      // 10. ОТПРАВКА ХОДА В LLM API (SLIDING WINDOW 8 СООБЩЕНИЙ)
+      // 10. ОТПРАВКА ХОДА: 2 ЗАПРОСА (МАСТЕР -> БУХГАЛТЕР)
       // ---------------------------------------------------------------------------
+const GM_PROMPT_PLAIN = `
+Ты выступаешь в роли Мастера (Dungeon Master) в текстовой ролевой игре по Забытым Королевствам (D&D 5e).
+ЖАНР: Приземлённое дорожное приключение, наёмничьи будни, грязь трактов, опасный мир без пафоса и спасения вселенной.
+
+КРИТИЧЕСКИЕ ПРАВИЛА:
+1. ЗАПРЕТ НА САМОВОЛЬНЫЕ БРОСКИ: Ты НИКОГДА сам не делаешь броски кубиков за игроков и не выдумываешь за них результат d20! 
+- Если действие персонажей требует проверки (Внимательность, Выживание, Убеждение, Атака и т.д.), ты обязан ОСТАНОВИТЬ повествование на моменте неопределенности и ЯВНО ЗАПРОСИТЬ бросок у игрока. Пример: *"Сделайте проверку Внимательности за Вэл (d20)"*.
+- Описывать успех или провал разрешено ТОЛЬКО ПОСЛЕ того, как игрок в своём сообщении прислал результат броска (например, [Бросок d20: 4]).
+- Низкие броски (1-7) ВСЕГДА приводят к неприятным последствиям: потеря времени, испачканное снаряжение, пропущенная засада, тупой конфуз. Мир не подыгрывает игрокам.
+2. ЗАПРЕТ НА КУКЛОВОДСТВО: Не решай, что говорят, думают или чувствуют герои. Твоя зона — мир, NPC, погода и реакция на броски.
+3. Формат: 2-3 емких абзаца экспозиции, после чего либо запрос конкретного броска, либо вопрос *"Что вы делаете?"*.
+
+Отвечай СТРОГО обычным художественным текстом в Markdown. Никакого JSON в ответе не выдавай!`;
+
+      const AUDITOR_PROMPT_STRICT = `
+Ты — калькулятор механики D&D 5e. Прочитай текущее состояние, действие игрока и ответ Мастера, затем заполни изменения.
+Верни СТРОГО один валидный JSON-объект без markdown-блоков, без кавычек \`\`\`json вокруг:
+{
+  "character_changes": [
+    {
+      "name": "Имя персонажа",
+      "hp_delta": 0,
+      "spell_slots_spent": { "1": 0 },
+      "conditions_add": [],
+      "conditions_remove": []
+    }
+  ],
+  "inventory_add": [{ "char_name": "Имя", "item": "Предмет", "qty": 1 }],
+  "inventory_remove": [{ "char_name": "Имя", "item": "Предмет", "qty": 1 }],
+  "currency_delta": { "gp": 0, "sp": 0, "cp": 0 },
+  "location_update": ""
+}
+Если изменений параметра нет — оставляй 0, [] или "".`;
+
       async function handleSendTurn(userText) {
         if (isGenerating || !userText.trim()) return;
 
-        // 1. Сохраняем снимок состояния для Отката хода (Undo) перед ходом
         createSnapshot();
 
-        // 2. Добавляем сообщение пользователя в историю
         campaign.chatHistory.push({
           role: 'user',
           content: userText.trim(),
@@ -2065,7 +2117,6 @@ if (copyBtn) {
         saveCampaign();
         renderChat(true);
 
-        // 3. Блокируем ввод и включаем спиннер
         isGenerating = true;
         updateUndoButtonState();
         const inputEl = document.getElementById('chatInput');
@@ -2080,73 +2131,117 @@ if (copyBtn) {
         if (loadingEl) loadingEl.classList.remove('hidden');
 
         try {
-          // Формируем сжатый контекст текущего мира и партии + строго последние 8 сообщений
-		  const partyForLlm = campaign.party.map(({ fullBio, ...rest }) => rest);
-		  
+          const partyForLlm = campaign.party.map(({ fullBio, ...rest }) => rest);
           const compactStateJson = JSON.stringify({
             campaignName: campaign.campaignName,
             world: campaign.world,
             party: partyForLlm
           });
 
-          const slidingHistory = campaign.chatHistory.slice(-8).map(m => ({
-            role: m.role,
-            content: m.content
-          }));
-
-          const messagesPayload = [
-            {
-              role: 'system',
-              content: `${SYSTEM_PROMPT}\n\nТЕКУЩЕЕ СОСТОЯНИЕ ПАРТИИ И МИРА (JSON):\n${compactStateJson}`
-            },
-            ...slidingHistory
-          ];
-
-          let rawModelContent = '';
-          const hasApiKey = Boolean(credentials.apiKey && credentials.apiKey.trim());
+          let gmText = '';
+          let stateUpdate = null;
 
           if (!credentials.demoMode) {
             const headers = { 'Content-Type': 'application/json' };
-            if (hasApiKey) {
+            if (credentials.apiKey && credentials.apiKey.trim()) {
               headers['Authorization'] = `Bearer ${credentials.apiKey.trim()}`;
             }
 
-            const response = await fetch(credentials.apiUrl, {
+            // ШАГ 1: Запрос к Мастеру за чистым текстом
+            const slidingHistory = campaign.chatHistory.slice(-8).map(m => ({
+              role: m.role,
+              content: m.content
+            }));
+
+            const gmRes = await fetch(credentials.apiUrl, {
               method: 'POST',
               headers,
               body: JSON.stringify({
-                model: credentials.model || 'gpt-4o-mini',
-                messages: messagesPayload,
-                temperature: 0.7,
-				response_format: { type: "json_object" }
+                model: credentials.model || 'deepseek-chat',
+                messages: [
+                  {
+                    role: 'system',
+                    content: `${GM_PROMPT_PLAIN}\n\nТЕКУЩЕЕ СОСТОЯНИЕ МИРА И ПАРТИИ:\n${compactStateJson}`
+                  },
+                  ...slidingHistory
+                ],
+                temperature: 0.7
               })
             });
 
-            if (!response.ok) {
-              const errText = await response.text().catch(() => '');
-              throw new Error(`Ошибка API (${response.status}): ${errText.slice(0, 140) || response.statusText}`);
+            if (!gmRes.ok) {
+              const errText = await gmRes.text().catch(() => '');
+              throw new Error(`Ошибка Мастера (${gmRes.status}): ${errText.slice(0, 140) || gmRes.statusText}`);
             }
 
-            const data = await response.json();
-            rawModelContent =
-              data?.choices?.[0]?.message?.content ||
-              data?.message?.content ||
-              data?.content?.[0]?.text ||
-              JSON.stringify(data);
+            const gmData = await gmRes.json();
+            gmText =
+              gmData?.choices?.[0]?.message?.content ||
+              gmData?.message?.content ||
+              gmData?.content?.[0]?.text ||
+              '';
+            gmText = gmText.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+
+            // ШАГ 2: Запрос к Бухгалтеру за сухим JSON
+            if (gmText) {
+              try {
+                const auditRes = await fetch(credentials.apiUrl, {
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify({
+                    model: credentials.model || 'deepseek-chat',
+                    messages: [
+                      { role: 'system', content: AUDITOR_PROMPT_STRICT },
+                      {
+                        role: 'user',
+                        content: `СОСТОЯНИЕ:\n${compactStateJson}\n\nДЕЙСТВИЕ ИГРОКА:\n${userText}\n\nХОД МАСТЕРА:\n${gmText}`
+                      }
+                    ],
+                    temperature: 0.0
+                  })
+                });
+
+                if (auditRes.ok) {
+                  const auditData = await auditRes.json();
+                  let auditContent =
+                    auditData?.choices?.[0]?.message?.content ||
+                    auditData?.message?.content ||
+                    auditData?.content?.[0]?.text ||
+                    '';
+                  auditContent = auditContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+                  stateUpdate = parseAuditorJson(auditContent);
+                }
+              } catch (auditErr) {
+                console.warn('[AUDIT] Сбой второго запроса:', auditErr);
+              }
+            }
           } else {
-            // Автономный демо-режим ГМа (с реалистичной паузой)
+            // Демо-режим
             await new Promise(resolve => setTimeout(resolve, 650));
-            rawModelContent = buildDemoGmResponse(userText);
+            const demoRes = buildDemoGmResponse(userText);
+            gmText = demoRes.narrative;
+            stateUpdate = demoRes.state_update;
           }
 
-          processRawGmOutput(rawModelContent);
+          // Применяем изменения к статам и добавляем в чат
+          let stateDeltaSummary = '';
+          if (stateUpdate) {
+            const badges = applyStateUpdate(stateUpdate);
+            stateDeltaSummary = badges.join(' ');
+          }
+
+          campaign.chatHistory.push({
+            role: 'assistant',
+            content: gmText || '*(Мастер промолчал)*',
+            stateDeltaSummary
+          });
         } catch (err) {
           campaign.chatHistory.push({
             role: 'assistant',
-            content: `**Ошибка связи с LLM API:** ${err.message}\n\n*Проверьте URL, API Key и настройки CORS в меню ⚙️ или включите «Автономный Демо-ГМ».*`,
-            stateDeltaSummary: '[Не удалось автоматически обновить статы]'
+            content: `**Ошибка связи с LLM API:** ${err.message}\n\n*Проверьте URL, API Key в меню ⚙️.*`,
+            stateDeltaSummary: '[Не удалось связаться с моделью]'
           });
-          showToast('Ошибка запроса к API. Проверьте настройки ⚙️', 'error');
+          showToast('Ошибка API. Проверьте настройки ⚙️', 'error');
         } finally {
           isGenerating = false;
           if (inputEl) {
@@ -2170,14 +2265,13 @@ if (copyBtn) {
           const badges = applyStateUpdate(parsed.state_update);
           stateDeltaSummary = badges.join(' ');
         } else {
-          // Мягкое предупреждение по ТЗ, если JSON повреждён или чистый текст
           stateDeltaSummary = '[Не удалось автоматически обновить статы]';
           showToast('Не удалось автоматически обновить статы (ответ не в JSON)', 'warning');
         }
 
         campaign.chatHistory.push({
           role: 'assistant',
-          content: parsed.narrative,
+          content: parsed.narrative || rawModelContent,
           stateDeltaSummary
         });
       }
