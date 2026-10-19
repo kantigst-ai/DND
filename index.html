@@ -471,8 +471,9 @@ const URL_PARAMS = new URLSearchParams(window.location.search);
 const CAMPAIGN_ID = (URL_PARAMS.get('c') || 'default').replace(/[^a-zA-Z0-9_\-]/g, '') || 'default';
 
 const STORAGE_KEYS = {
-  CAMPAIGN: `dnd_campaign_${CAMPAIGN_ID}`, // У каждой кампании строго свой ключ в localStorage
-  CREDENTIALS: 'dnd_credentials',         // API-ключи общие для всех кампаний
+  CAMPAIGN: `dnd_campaign_${CAMPAIGN_ID}`,
+  CREDENTIALS: 'dnd_credentials',
+  SNAPSHOT: `dnd_snapshot_${CAMPAIGN_ID}`,
   BACKUP: `dnd_campaign_backup_${CAMPAIGN_ID}`
 };
 
@@ -1090,17 +1091,17 @@ async function initCampaignSelector() {
       // ---------------------------------------------------------------------------
       // 6. РЕНДЕР ИСТОРИИ СООБЩЕНИЙ (CHAT STREAM)
       // ---------------------------------------------------------------------------
-      function renderChat(scrollToBottom = true) {
+function renderChat(scrollToBottom = true) {
         const stream = document.getElementById('chatStream');
         if (!stream) return;
         stream.innerHTML = '';
 
         campaign.chatHistory.forEach((msg, index) => {
           const isUser = msg.role === 'user';
+          const isLastAssistant = !isUser && index === campaign.chatHistory.length - 1;
           const wrapper = document.createElement('div');
           wrapper.className = `flex flex-col ${isUser ? 'items-end' : 'items-start'}`;
 
-          // Блок аудита изменений над ответом ГМа (если были изменения)
           let auditHtml = '';
           if (!isUser && msg.stateDeltaSummary && msg.stateDeltaSummary.trim()) {
             const tags = msg.stateDeltaSummary
@@ -1109,7 +1110,7 @@ async function initCampaignSelector() {
               .filter(Boolean);
             const badgesHtml = tags
               .map(tag => {
-                const isWarning = tag.includes('Не удалось автоматически обновить статы');
+                const isWarning = tag.includes('Не удалось');
                 return `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${
                   isWarning
                     ? 'bg-amber-950/90 text-amber-300 border border-amber-500/50'
@@ -1125,33 +1126,63 @@ async function initCampaignSelector() {
           if (isUser) {
             bubble.className =
               'max-w-[86%] sm:max-w-[75%] rounded-2xl rounded-br-sm bg-amber-500/15 border border-amber-500/35 text-zinc-100 px-3.5 py-2.5 text-sm leading-relaxed shadow-sm';
-            bubble.innerHTML = `<div class="whitespace-pre-wrap break-words">${escapeHtml(msg.content)}</div>`;
+            bubble.innerHTML = `
+              <div class="flex items-center justify-between gap-3 mb-1 pb-1 border-b border-amber-500/20 text-[10px] text-zinc-400">
+                <span class="font-semibold text-amber-400/90">Игрок</span>
+                <button type="button" class="btn-copy-user inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-amber-400 border border-zinc-700/60 transition-colors" title="Скопировать">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                  </svg>
+                  <span>Копия</span>
+                </button>
+              </div>
+              <div class="whitespace-pre-wrap break-words">${escapeHtml(msg.content)}</div>
+            `;
+            const copyBtn = bubble.querySelector('.btn-copy-user');
+            if (copyBtn) {
+              copyBtn.addEventListener('click', () => copyToClipboard(msg.content));
+            }
           } else {
             bubble.className =
               'max-w-[94%] sm:max-w-[84%] rounded-2xl rounded-bl-sm bg-zinc-900/95 border border-zinc-800 text-zinc-100 px-4 py-3 text-sm leading-relaxed shadow-md';
-            bubble.innerHTML = `
-  <div class="flex items-center justify-between gap-2 mb-1.5 pb-1 border-b border-zinc-800/80">
-    <span class="text-[11px] font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1">
-      <span>🐉 Мастер Подземелий</span>
-    </span>
-    <div class="flex items-center gap-2">
-      <span class="text-[10px] text-zinc-500">Ход #${index + 1}</span>
-      <button type="button" class="btn-copy-turn inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-300 hover:text-amber-400 border border-zinc-700 text-[10px] font-medium transition-colors" title="Скопировать текст хода">
-        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-        </svg>
-        <span>Копия</span>
-      </button>
-    </div>
-  </div>
-  <div class="gm-markdown break-words">${renderMarkdown(msg.content)}</div>
-`;
 
-// Вешаем обработчик копирования:
-const copyBtn = bubble.querySelector('.btn-copy-turn');
-if (copyBtn) {
-  copyBtn.addEventListener('click', () => copyToClipboard(msg.content));
-}
+            // Кнопка реролла только слева, на последнем сообщении Мастера
+            const rerollBtnHtml = isLastAssistant
+              ? `<button type="button" id="btnRerollTurn" class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/50 text-[10px] font-medium transition-colors" title="Перегенерировать ответ ГМа">
+                  <span>🔄 Реролл</span>
+                </button>`
+              : '';
+
+            bubble.innerHTML = `
+              <div class="flex items-center justify-between gap-2 mb-1.5 pb-1 border-b border-zinc-800/80">
+                <div class="flex items-center gap-2">
+                  <span class="text-[11px] font-bold uppercase tracking-wider text-amber-500 flex items-center gap-1">
+                    <span>🐉 Мастер</span>
+                  </span>
+                  ${rerollBtnHtml}
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] text-zinc-500">Ход #${index + 1}</span>
+                  <button type="button" class="btn-copy-turn inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-zinc-300 hover:text-amber-400 border border-zinc-700 text-[10px] font-medium transition-colors" title="Скопировать текст хода">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                    </svg>
+                    <span>Копия</span>
+                  </button>
+                </div>
+              </div>
+              <div class="gm-markdown break-words">${renderMarkdown(msg.content)}</div>
+            `;
+
+            const copyBtn = bubble.querySelector('.btn-copy-turn');
+            if (copyBtn) {
+              copyBtn.addEventListener('click', () => copyToClipboard(msg.content));
+            }
+
+            const rerollBtn = bubble.querySelector('#btnRerollTurn');
+            if (rerollBtn) {
+              rerollBtn.addEventListener('click', () => handleRerollLastTurn());
+            }
           }
 
           if (auditHtml) {
@@ -1168,6 +1199,35 @@ if (copyBtn) {
             stream.scrollTop = stream.scrollHeight;
           });
         }
+      }
+
+function handleRerollLastTurn() {
+        if (isGenerating || campaign.chatHistory.length < 2) return;
+
+        const lastIdx = campaign.chatHistory.length - 1;
+        const lastMsg = campaign.chatHistory[lastIdx];
+        const prevMsg = campaign.chatHistory[lastIdx - 1];
+
+        // Проверяем, что последнее сообщение — ГМ, а перед ним действительно ход игрока
+        if (lastMsg.role !== 'assistant' || !prevMsg || prevMsg.role !== 'user') return;
+
+        // 1. Запоминаем текст последней заявки игрока
+        const userPrompt = prevMsg.content;
+
+        // 2. Откатываем статы партии и мира (если есть снимок до ответа ГМа)
+        if (lastSnapshot) {
+          campaign.party = deepClone(lastSnapshot.party);
+          campaign.world = deepClone(lastSnapshot.world);
+          campaign.campaignName = lastSnapshot.campaignName;
+        }
+
+        // 3. Срезаем из истории оба сообщения: кривой ответ ГМа и ход игрока
+        // (handleSendTurn добавит ход игрока заново сам)
+        campaign.chatHistory.splice(lastIdx - 1, 2);
+
+        // 4. Запускаем генерацию заново с тем же текстом
+        handleSendTurn(userPrompt);
+        showToast('🔄 Перегенерация ответа Мастера...', 'info');
       }
 
       function updateUndoButtonState() {
@@ -2785,8 +2845,8 @@ const GM_PROMPT_PLAIN = `
       updateUndoButtonState();
       initEventListeners();
 
-// Синхронизация с сервером
-      (async function syncWithServer() {
+// Синхронизация с сервером (по таймстемпу updatedAt + автоподхват при фокусе)
+      async function syncWithServer() {
         try {
           const res = await fetch(`/api/campaign?id=${encodeURIComponent(CAMPAIGN_ID)}`, {
             cache: 'no-store'
@@ -2795,39 +2855,43 @@ const GM_PROMPT_PLAIN = `
           if (res.ok) {
             const serverRaw = await res.json();
             const serverData = validateAndNormalizeCampaign(serverRaw);
-            if (serverData) {
-              const localRaw = safeGetStorage(STORAGE_KEYS.CAMPAIGN);
-              let localData = null;
-              try {
-                if (localRaw) localData = validateAndNormalizeCampaign(JSON.parse(localRaw));
-              } catch (_) {}
+            if (!serverData) return;
 
-              const localTurns = localData?.chatHistory?.length || 0;
-              const serverTurns = serverData?.chatHistory?.length || 0;
+            const serverTime = parseInt(serverRaw.updatedAt, 10) || 0;
+            const localTime = parseInt(campaign.updatedAt, 10) || 0;
 
-              // Телефон перезаписывает сервер только если на нём реально играли офлайн (больше ходов в чате)
-              if (localData && localTurns > serverTurns) {
-                console.log(`[SYNC] На телефоне есть офлайн-ходы (${localTurns} > ${serverTurns}), пушим на сервер`);
-                saveCampaign();
-                return;
-              }
-
-              // В остальных случаях сервер — главный источник правды
+            // Если на сервере данные свежее, чем в текущей вкладке — обновляем
+            if (serverTime > localTime) {
               campaign = serverData;
+              campaign.updatedAt = serverTime;
               safeSetStorage(STORAGE_KEYS.CAMPAIGN, JSON.stringify(campaign));
               renderHud();
-              renderChat(true);
-              console.log(`[SYNC] Кампания "${CAMPAIGN_ID}" загружена с сервера`);
+              renderChat(false);
+              console.log(`[SYNC] Загружена более свежая версия с сервера (${new Date(serverTime).toLocaleTimeString()})`);
+            } else if (localTime > serverTime) {
+              // Если в этой вкладке только что что-то изменили офлайн — отдаём серверу
+              saveCampaign();
             }
           } else if (res.status === 404) {
-            // Новая кампания — сразу фиксируем файл на сервере
-            console.log(`[SYNC] Новая кампания "${CAMPAIGN_ID}", создаём файл на сервере`);
             saveCampaign();
           }
         } catch (e) {
-          console.log('[SYNC] Автономный режим');
+          console.log('[SYNC] Работа в автономном режиме');
         }
-      })();
+      }
+
+      // Запуск при старте
+      syncWithServer();
+
+      // Автоматическая проверка сервера при возвращении на вкладку (разблокировка экрана на телефоне)
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && !isGenerating) {
+          syncWithServer();
+        }
+      });
+      window.addEventListener('focus', () => {
+        if (!isGenerating) syncWithServer();
+      });
     })();
   </script>
 </body>
